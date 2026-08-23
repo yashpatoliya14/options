@@ -1,0 +1,28 @@
+{
+  "summary": {
+    "data_mode": "reconstructed",
+    "data_mode_warning": "RECONSTRUCTED MODE: option premiums are Black-Scholes theoretical estimates using an assumed flat implied volatility, not real historical bid/ask data. Treat P&L figures as directional/illustrative only, not a reliable estimate of real trading results.",
+    "total_trades": 0,
+    "winning_trades": 0,
+    "losing_trades": 0,
+    "win_rate_pct": 0.0,
+    "gross_pnl": 0,
+    "total_fees": 0,
+    "net_pnl": 0,
+    "average_trade_pnl": 0.0,
+    "max_drawdown": 0.0,
+    "profit_factor": 0.0,
+    "sharpe_ratio_per_trade": 0.0,
+    "average_holding_time_hours": 0.0,
+    "largest_winning_trade": 0.0,
+    "largest_losing_trade": 0.0,
+    "monthly_pnl": {},
+    "signal_changes": 84,
+    "skipped_signals": 84,
+    "skip_reasons": {
+      "min_premium_not_met_today_or_tomorrow": 84
+    },
+    "max_skipped_premium_seen": 1.24
+  },
+  "equity_curve": []
+}
