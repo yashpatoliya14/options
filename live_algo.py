@@ -523,7 +523,7 @@ def run_bot():
     }
     
     # Position reconciliation on restart (LIVE mode only)
-    if MODE == "LIVE" and state.get('active_call') or state.get('active_put'):
+    if MODE == "LIVE" and (state.get('active_call') or state.get('active_put')):
         logger.info("Reconciling positions from previous session...")
         product_ids = []
         if state.get('active_call'):
@@ -533,17 +533,14 @@ def run_bot():
         
         try:
             positions = api.get_positions(product_ids)
-            for pos in positions:
-                size = int(pos.get('size', 0))
-                pid = pos.get('product_id')
-                if size == 0:
-                    # Position was closed externally
-                    if state.get('active_call') and state['active_call']['product_id'] == pid:
-                        logger.warning(f"Call position {pid} no longer open. Clearing from state.")
-                        state['active_call'] = None
-                    if state.get('active_put') and state['active_put']['product_id'] == pid:
-                        logger.warning(f"Put position {pid} no longer open. Clearing from state.")
-                        state['active_put'] = None
+            open_product_ids = {pos.get('product_id') for pos in positions if int(pos.get('size', 0)) != 0}
+            
+            if state.get('active_call') and state['active_call']['product_id'] not in open_product_ids:
+                logger.warning(f"Call position {state['active_call']['product_id']} no longer open on exchange. Clearing from state.")
+                state['active_call'] = None
+            if state.get('active_put') and state['active_put']['product_id'] not in open_product_ids:
+                logger.warning(f"Put position {state['active_put']['product_id']} no longer open on exchange. Clearing from state.")
+                state['active_put'] = None
             
             save_state(state)
             logger.info("Position reconciliation complete.")
@@ -597,6 +594,32 @@ def run_bot():
                 logger.warning(f"Invalid mark price: {current_price}")
                 time.sleep(CHECK_INTERVAL_SEC)
                 continue
+            
+            # Reconcile active positions with Delta Exchange in real-time (LIVE mode only)
+            if MODE == "LIVE" and (state.get('active_call') or state.get('active_put')):
+                product_ids = []
+                if state.get('active_call'):
+                    product_ids.append(state['active_call']['product_id'])
+                if state.get('active_put'):
+                    product_ids.append(state['active_put']['product_id'])
+                
+                try:
+                    positions = api.get_positions(product_ids)
+                    open_product_ids = {pos.get('product_id') for pos in positions if int(pos.get('size', 0)) != 0}
+                    
+                    if state.get('active_call') and state['active_call']['product_id'] not in open_product_ids:
+                        logger.warning(f"Call position {state['active_call']['product_id']} was closed externally. Clearing from state.")
+                        send_telegram(f"⚠️ <b>Call Position Closed Externally ({MODE})</b>\nSymbol: {state['active_call']['symbol']}")
+                        state['active_call'] = None
+                        save_state(state)
+                        
+                    if state.get('active_put') and state['active_put']['product_id'] not in open_product_ids:
+                        logger.warning(f"Put position {state['active_put']['product_id']} was closed externally. Clearing from state.")
+                        send_telegram(f"⚠️ <b>Put Position Closed Externally ({MODE})</b>\nSymbol: {state['active_put']['symbol']}")
+                        state['active_put'] = None
+                        save_state(state)
+                except Exception as e:
+                    logger.error(f"Failed to reconcile open positions during cycle: {e}")
             
             # ==========================================
             # DAILY LOSS LIMIT CHECK
