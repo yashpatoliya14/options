@@ -82,39 +82,35 @@ def build_candle_stream_poller(client: DeltaClient, last_seen_ts: Optional[int])
     Polls Delta for the most recently CLOSED 3h candle and yields it once,
     when it's new. Never yields a still-forming candle.
     """
+    from utils.candle_aggregator import fetch_3h_candles
+    
     def poll() -> Optional[Candle]:
         now = int(time.time())
-        try:
-            raw = client.get_historical_candles(CONFIG.underlying_symbol, "3h", now - 3 * 3600 * 3, now)
-        except Exception:
-            raw_1h = client.get_historical_candles(CONFIG.underlying_symbol, "1h", now - 3 * 3600 * 3, now)
-            if not raw_1h:
-                return None
-            raw_1h.sort(key=lambda r: int(r["time"]))
-            raw = []
-            start_idx = 0
-            while start_idx < len(raw_1h) and int(raw_1h[start_idx]["time"]) % 10800 != 0:
-                start_idx += 1
-            for i in range(start_idx, len(raw_1h) - 2, 3):
-                chunk = raw_1h[i:i + 3]
-                raw.append({
-                    "time": chunk[-1]["time"],
-                    "open": chunk[0]["open"],
-                    "high": max(float(c["high"]) for c in chunk),
-                    "low": min(float(c["low"]) for c in chunk),
-                    "close": chunk[-1]["close"]
-                })
+        # Fetch 3H candles for the last 9 hours (3 complete 3H candles)
+        candles = fetch_3h_candles(client, CONFIG.underlying_symbol, now - 9 * 3600, now)
         
-        if not raw:
+        if not candles:
             return None
-        raw.sort(key=lambda r: int(r["time"]))
-        latest = raw[-1]
-        ts = int(latest["time"])
+            
+        # Get the most recent candle
+        latest = candles[-1]
+        ts = latest.timestamp
+        
+        # Prevent look-ahead bias in live trading: 
+        # Only process the candle if its precise close time has passed.
+        if now < ts:
+            if len(candles) < 2:
+                return None
+            latest = candles[-2]
+            ts = latest.timestamp
+        
         nonlocal_last = poll.last_seen
         if nonlocal_last is not None and ts <= nonlocal_last:
             return None
+            
         poll.last_seen = ts
-        return Candle(ts, float(latest["open"]), float(latest["high"]), float(latest["low"]), float(latest["close"]))
+        return latest
+        
     poll.last_seen = last_seen_ts
     return poll
 

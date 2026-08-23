@@ -61,12 +61,14 @@ class StrategyEngine:
         # (spec section 14: duplicate protection across restarts).
         self.current_position: Optional[Position] = existing_position
         self._last_trend: Optional[Trend] = None
+        self._active_signal: Optional[str] = None
         if existing_position is not None:
             self._last_trend = (
                 Trend.BULLISH
                 if existing_position.strategy_direction == "BUY"
                 else Trend.BEARISH
             )
+            self._active_signal = existing_position.strategy_direction
 
     def on_candle_close(self, candle: Candle) -> Optional[SupertrendPoint]:
         """
@@ -88,11 +90,35 @@ class StrategyEngine:
         ))
 
         if not point.signal_change:
-            # Same trend persists -- explicitly do nothing, per spec.
-            return point
+            # Same trend persists.
+            # If we hit an SL, current_position is None but we still shouldn't re-enter.
+            if self.current_position is None and self._active_signal == point.trend.value:
+                return point
+            elif self.current_position is not None:
+                return point
 
+        self._active_signal = point.trend.value
         self._handle_signal_change(point)
         return point
+
+    def evaluate_stop_loss(self, current_premium: float, timestamp: int) -> bool:
+        """
+        Evaluates the stop-loss on the current open position.
+        Returns True if the position was closed due to SL, False otherwise.
+        """
+        if self.current_position is None:
+            return False
+            
+        sl_threshold = self.current_position.entry_premium * (1 + self.cfg.stop_loss_percent / 100.0)
+        
+        # We sold the option, so if premium goes UP above the threshold, we lose and SL triggers.
+        if current_premium >= sl_threshold:
+            self._close_current_position(timestamp, reason="stop_loss")
+            # Note: current_position is now None, but _active_signal remains, 
+            # preventing re-entry until Supertrend flips.
+            return True
+            
+        return False
 
     def finalize(self, timestamp: int, reason: str = "end_of_backtest") -> None:
         """
@@ -122,9 +148,10 @@ class StrategyEngine:
         result = select_expiry_and_strike(
             broker=self.broker,
             underlying=self.cfg.underlying_asset,
-            reference_price=point.reference_price,
+            reference_price=point.value,  # Use Supertrend Level, not underlying price
             option_type=option_type,
             min_premium=self.cfg.min_premium_usd,
+            otm_distance=self.cfg.otm_distance_usd,
             as_of_timestamp=point.timestamp,
         )
 

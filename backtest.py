@@ -15,6 +15,7 @@ Usage:
 import argparse
 import json
 import time
+import datetime
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -54,35 +55,16 @@ def fetch_underlying_candles(start_ts: int, end_ts: int, resolution: str = "3h")
             cursor = chunk_end + 1
         return sorted({int(r["time"]): r for r in rows}.values(), key=lambda r: int(r["time"]))
 
-    # Some Delta deployments reject 3h as an unsupported resolution. Try it
-    # first, then transparently fall back to 1h aggregation.
-    try:
-        raw = fetch_chunked(resolution)
-    except Exception as exc:
-        if resolution != "3h":
-            raise
-        print("Note: Native 3h candles unavailable; successfully falling back to 1h aggregation.")
-        raw = []
-
-    if raw:
-        return [
-            Candle(timestamp=int(r["time"]), open=float(r["open"]), high=float(r["high"]),
-                   low=float(r["low"]), close=float(r["close"]))
-            for r in raw
-        ]
-
-    # Fallback: aggregate 1h -> 3h.
+    # Based on diagnostic report, 3h resolution is not supported by Delta Exchange.
+    # Always use 1h aggregation for consistency.
+    from utils.candle_aggregator import aggregate_1h_to_3h
+    
     raw_1h = fetch_chunked("1h")
-    candles = []
-    for i in range(0, len(raw_1h) - 2, 3):
-        chunk = raw_1h[i:i + 3]
-        candles.append(Candle(
-            timestamp=int(chunk[-1]["time"]),
-            open=float(chunk[0]["open"]),
-            high=max(float(c["high"]) for c in chunk),
-            low=min(float(c["low"]) for c in chunk),
-            close=float(chunk[-1]["close"]),
-        ))
+    if not raw_1h:
+        return []
+    
+    candles = aggregate_1h_to_3h(raw_1h)
+    print(f"Fetched {len(raw_1h)} 1H candles, aggregated to {len(candles)} 3H candles.")
     return candles
 
 
@@ -112,6 +94,29 @@ def run_backtest(candles: List[Candle], data_mode: str, cfg, initial_margin: flo
 
     for c in candles:
         broker.set_clock(c.timestamp)
+        
+        # --- Intra-candle Stop-Loss Evaluation ---
+        # Evaluate SL using the worst-case underlying price during this 3H candle.
+        if engine.current_position is not None:
+            pos = engine.current_position
+            # For a short PUT, the highest premium (worst for us) occurs when spot is LOW.
+            # For a short CALL, the highest premium (worst for us) occurs when spot is HIGH.
+            worst_spot = c.low if pos.option_type == "put" else c.high
+            
+            # Fetch reconstructed quote at the worst spot to get worst premium
+            # Extract underlying from symbol: e.g. "P-BTCUSD-40000-2024-01-01" -> "BTCUSD"
+            # The symbol format in simulated_broker is: "P-BTCUSD-..."
+            symbol_parts = pos.symbol.split('-')
+            underlying_sym = symbol_parts[1] if len(symbol_parts) > 1 else cfg.underlying_symbol
+            
+            quotes = broker.get_option_chain(underlying_sym, pos.expiry, timestamp=c.timestamp, spot_override=worst_spot)
+            
+            for q in quotes:
+                if q.strike == pos.strike and q.option_type == pos.option_type:
+                    engine.evaluate_stop_loss(q.premium, c.timestamp)
+                    break
+        # -----------------------------------------
+
         engine.on_candle_close(c)
 
     # Realize any open position at the end of the dataset so PnL isn't left unrealized.
@@ -132,10 +137,18 @@ def summarize(events: List[EngineEvent], data_mode: str, cfg, initial_margin: fl
             entry_premium = open_trade["premium"]
             exit_premium = e.payload.get("exit_premium") or 0.0
             quantity = open_trade["quantity"]
-            # selling an option: profit = (entry_premium - exit_premium) * quantity
+            # selling an option: profit = (entry_premium - exit_premium) * quantity * contract_value
             # (you collect premium on entry, pay it back to close)
-            gross_pnl = (entry_premium - exit_premium) * quantity
-            fees = (entry_premium + exit_premium) * quantity * (cfg.fee_pct / 100.0)
+            gross_pnl = (entry_premium - exit_premium) * quantity * cfg.contract_value_underlying
+            
+            # Calculate fees based on notional value (strike * contract value * quantity)
+            # Entry and exit are both taker orders in this strategy
+            notional_value = open_trade["strike"] * cfg.contract_value_underlying * quantity
+            fee_rate = cfg.fee_pct / 100.0  # Convert percentage to decimal
+            entry_fee = notional_value * fee_rate
+            exit_fee = notional_value * fee_rate
+            fees = entry_fee + exit_fee
+            
             net_pnl = gross_pnl - fees
             trades.append({
                 "entry_timestamp": open_trade["entry_timestamp"],
@@ -303,51 +316,365 @@ def print_beautiful_output(result: dict) -> None:
     console.print(Panel(summary_text, title="Backtest Summary", border_style="blue", expand=False))
 
 
+def run_year_backtest(year: int, initial_capital: float, data_mode: str = "reconstructed") -> dict:
+    """
+    Run backtest for a specific year.
+    
+    Args:
+        year: Year to backtest (e.g., 2024, 2025, 2026)
+        initial_capital: Initial capital in USD
+        data_mode: 'reconstructed' or 'realistic'
+        
+    Returns:
+        Backtest results dictionary
+    """
+    import datetime
+    
+    # Define year boundaries
+    start_date = datetime.datetime(year, 1, 1)
+    end_date = datetime.datetime(year, 12, 31, 23, 59, 59)
+    
+    start_ts = int(start_date.timestamp())
+    end_ts = int(end_date.timestamp())
+    
+    # Ensure we don't include future data
+    current_ts = int(time.time())
+    if end_ts > current_ts:
+        end_ts = current_ts
+        
+    console = Console()
+    console.print(f"[cyan]Running {year} backtest from {start_date.date()} to {end_date.date()}[/cyan]")
+    console.print(f"[cyan]Initial Capital: ${initial_capital:,.2f}[/cyan]")
+    console.print(f"[cyan]Data Mode: {data_mode}[/cyan]")
+    
+    # Display fee information
+    from utils.fee_calculator import FeeCalculator
+    fee_calc = FeeCalculator(CONFIG)
+    fee_rate = fee_calc.get_fee_rate(is_taker=True)
+    console.print(f"[cyan]Fee Rate: {fee_rate*100:.4f}% (Taker)[/cyan]")
+    console.print(f"[cyan]Fee Source: Delta Exchange API (from diagnostic report)[/cyan]")
+    
+    # Fetch candles
+    console.print(f"[cyan]Fetching underlying candles...[/cyan]")
+    candles = fetch_underlying_candles(start_ts, end_ts)
+    
+    if not candles:
+        console.print(f"[red]No candles found for {year}. Check API connectivity and data availability.[/red]")
+        return {"trades": [], "summary": {}, "equity_curve": []}
+        
+    console.print(f"[green]Loaded {len(candles)} 3h candles for {year}.[/green]")
+    
+    # Run backtest
+    result = run_backtest(candles, data_mode, CONFIG, initial_capital)
+    
+    # Save results
+    save_backtest_results(year, result, initial_capital, data_mode, fee_rate)
+    
+    return result
+
+
+def save_backtest_results(year: int, result: dict, initial_capital: float, 
+                          data_mode: str, fee_rate: float):
+    """
+    Save backtest results to organized directory structure.
+    """
+    import os
+    import json
+    import csv
+    import datetime
+    
+    # Create directory structure
+    results_dir = f"backtest_results/{year}"
+    os.makedirs(results_dir, exist_ok=True)
+    
+    # Prepare metadata
+    metadata = {
+        "year": year,
+        "initial_capital": initial_capital,
+        "data_mode": data_mode,
+        "fee_rate": fee_rate,
+        "fee_source": "Delta Exchange API (from diagnostic report)",
+        "strategy_parameters": {
+            "timeframe": CONFIG.timeframe,
+            "supertrend_atr_period": CONFIG.supertrend_atr_period,
+            "supertrend_multiplier": CONFIG.supertrend_multiplier,
+            "min_premium_usd": CONFIG.min_premium_usd,
+            "margin_budget_usd": CONFIG.margin_budget_usd,
+            "contract_value_underlying": CONFIG.contract_value_underlying,
+        },
+        "execution_timestamp": datetime.datetime.now().isoformat(),
+        "data_range": {
+            "start": datetime.datetime.fromtimestamp(result["trades"][0]["entry_timestamp"]).isoformat() if result["trades"] else None,
+            "end": datetime.datetime.fromtimestamp(result["trades"][-1]["exit_timestamp"]).isoformat() if result["trades"] else None,
+        }
+    }
+    
+    # Save trades as CSV
+    trades_path = os.path.join(results_dir, "trades.csv")
+    if result["trades"]:
+        with open(trades_path, "w", newline="") as f:
+            fieldnames = list(result["trades"][0].keys())
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(result["trades"])
+    
+    # Save summary as JSON
+    summary_path = os.path.join(results_dir, "summary.json")
+    with open(summary_path, "w") as f:
+        json.dump(result["summary"], f, indent=2)
+        
+    # Save metadata
+    metadata_path = os.path.join(results_dir, "metadata.json")
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+        
+    # Save equity curve
+    equity_path = os.path.join(results_dir, "equity_curve.csv")
+    if result.get("equity_curve"):
+        with open(equity_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["timestamp", "equity"])
+            writer.writeheader()
+            writer.writerows(result["equity_curve"])
+            
+        # Attempt to create a plot
+        try:
+            import matplotlib.pyplot as plt
+            dates = [datetime.datetime.fromtimestamp(pt["timestamp"]) for pt in result["equity_curve"]]
+            equities = [pt["equity"] for pt in result["equity_curve"]]
+            
+            plt.figure(figsize=(10, 6))
+            plt.plot(dates, equities, label='Equity', color='blue')
+            plt.title(f'Equity Curve ({year})')
+            plt.xlabel('Date')
+            plt.ylabel('Portfolio Equity (USD)')
+            plt.grid(True)
+            plt.legend()
+            
+            plot_path = os.path.join(results_dir, "equity_curve.png")
+            plt.savefig(plot_path)
+            plt.close()
+        except ImportError:
+            pass  # matplotlib not installed
+    
+    # Save report as text
+    report_path = os.path.join(results_dir, "report.txt")
+    generate_text_report(year, result, metadata, report_path)
+    
+    print(f"Results saved to {results_dir}/")
+
+
+def generate_text_report(year: int, result: dict, metadata: dict, filepath: str):
+    """
+    Generate a comprehensive text report.
+    """
+    summary = result["summary"]
+    trades = result["trades"]
+    
+    with open(filepath, "w") as f:
+        f.write(f"BACKTEST REPORT - {year}\n")
+        f.write("=" * 50 + "\n\n")
+        
+        f.write("STRATEGY PARAMETERS\n")
+        f.write("-" * 30 + "\n")
+        for key, value in metadata["strategy_parameters"].items():
+            f.write(f"{key}: {value}\n")
+        f.write(f"Fee Rate: {metadata['fee_rate']*100:.4f}%\n")
+        f.write(f"Data Mode: {metadata['data_mode']}\n\n")
+        
+        f.write("CAPITAL SUMMARY\n")
+        f.write("-" * 30 + "\n")
+        f.write(f"Initial Capital: ${metadata['initial_capital']:,.2f}\n")
+        if trades:
+            final_equity = trades[-1].get("cumulative_pnl", metadata["initial_capital"])
+            f.write(f"Final Capital: ${final_equity:,.2f}\n")
+            f.write(f"Net P&L: ${summary.get('net_pnl', 0):,.2f}\n")
+            f.write(f"Return: {summary.get('net_pnl', 0)/metadata['initial_capital']*100:.2f}%\n")
+        f.write("\n")
+        
+        f.write("TRADING STATISTICS\n")
+        f.write("-" * 30 + "\n")
+        f.write(f"Total Trades: {summary.get('total_trades', 0)}\n")
+        f.write(f"Winning Trades: {summary.get('winning_trades', 0)}\n")
+        f.write(f"Losing Trades: {summary.get('losing_trades', 0)}\n")
+        f.write(f"Win Rate: {summary.get('win_rate_pct', 0):.2f}%\n")
+        f.write(f"Profit Factor: {summary.get('profit_factor', 0):.2f}\n")
+        f.write(f"Max Drawdown: ${summary.get('max_drawdown', 0):,.2f}\n")
+        f.write(f"Average Trade P&L: ${summary.get('average_trade_pnl', 0):,.2f}\n")
+        f.write(f"Largest Win: ${summary.get('largest_winning_trade', 0):,.2f}\n")
+        f.write(f"Largest Loss: ${summary.get('largest_losing_trade', 0):,.2f}\n")
+        f.write(f"Total Fees: ${summary.get('total_fees', 0):,.2f}\n\n")
+        
+        f.write("TRADE DETAILS\n")
+        f.write("-" * 30 + "\n")
+        for i, trade in enumerate(trades[:10]):  # Show first 10 trades
+            f.write(f"Trade {i+1}: {trade['option_type'].upper()} "
+                   f"Strike ${trade['strike']:,.0f} "
+                   f"Qty {trade['quantity']} "
+                   f"P&L ${trade['net_pnl']:,.2f}\n")
+        if len(trades) > 10:
+            f.write(f"... and {len(trades) - 10} more trades\n")
+            
+        f.write("\nEXECUTION INFO\n")
+        f.write("-" * 30 + "\n")
+        f.write(f"Run at: {metadata['execution_timestamp']}\n")
+        f.write(f"Data Range: {metadata['data_range']['start']} to {metadata['data_range']['end']}\n")
+
+
+def compare_years(years: list, initial_capital: float, data_mode: str = "reconstructed"):
+    """
+    Compare backtest results across multiple years.
+    """
+    console = Console()
+    
+    results = {}
+    for year in years:
+        console.print(f"\n[cyan]Running {year} backtest...[/cyan]")
+        result = run_year_backtest(year, initial_capital, data_mode)
+        results[year] = result
+        
+    # Display comparison table
+    table = Table(title=f"Year-by-Year Comparison (Initial Capital: ${initial_capital:,.2f})")
+    table.add_column("Year", style="cyan")
+    table.add_column("Initial", justify="right")
+    table.add_column("Final", justify="right")
+    table.add_column("Net P&L", justify="right")
+    table.add_column("Return %", justify="right")
+    table.add_column("Win Rate %", justify="right")
+    table.add_column("Max DD", justify="right")
+    table.add_column("Trades", justify="right")
+    
+    for year in years:
+        if year in results:
+            summary = results[year]["summary"]
+            trades = results[year]["trades"]
+            
+            if trades:
+                final_equity = trades[-1].get("cumulative_pnl", initial_capital)
+                net_pnl = summary.get("net_pnl", 0)
+                return_pct = (net_pnl / initial_capital) * 100 if initial_capital > 0 else 0
+            else:
+                final_equity = initial_capital
+                net_pnl = 0
+                return_pct = 0
+                
+            table.add_row(
+                str(year),
+                f"${initial_capital:,.0f}",
+                f"${final_equity:,.0f}",
+                f"${net_pnl:,.0f}",
+                f"{return_pct:.1f}%",
+                f"{summary.get('win_rate_pct', 0):.1f}%",
+                f"${summary.get('max_drawdown', 0):,.0f}",
+                str(summary.get('total_trades', 0))
+            )
+            
+    console.print(table)
+    
+    # Save comparison
+    import json
+    comparison = {
+        "initial_capital": initial_capital,
+        "data_mode": data_mode,
+        "years": years,
+        "results": {year: results[year]["summary"] for year in years if year in results}
+    }
+    
+    with open("backtest_results/year_comparison.json", "w") as f:
+        json.dump(comparison, f, indent=2)
+
+
 def main():
+    import sys
+    
+    console = Console()
+    
+    # Parse command line arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["reconstructed", "realistic"], default=CONFIG.backtest_data_mode
-                         if CONFIG.backtest_data_mode in ("reconstructed", "realistic") else "reconstructed")
+    parser.add_argument("--year", type=int, help="Specific year to backtest (e.g., 2024)")
+    parser.add_argument("--years", type=str, help="Comma-separated years (e.g., '2024,2025,2026')")
+    parser.add_argument("--mode", choices=["reconstructed", "realistic"], default="reconstructed",
+                        help="Data mode: reconstructed (theoretical) or realistic (historical)")
+    parser.add_argument("--capital", type=float, help="Initial capital amount")
+    parser.add_argument("--compare", action="store_true", help="Compare multiple years")
     parser.add_argument("--min-premium", type=float, default=None,
                         help="Override MIN_PREMIUM for this run only.")
-    parser.add_argument("--days", type=int, default=180, help="lookback window if --start/--end not given")
-    parser.add_argument("--start", type=str, default=None, help="YYYY-MM-DD")
-    parser.add_argument("--end", type=str, default=None, help="YYYY-MM-DD")
-    parser.add_argument("--initial-margin", type=float, default=1000.0, help="Initial margin/capital")
     args = parser.parse_args()
-
-    if args.start and args.end:
-        import datetime
-        start_ts = int(datetime.datetime.fromisoformat(args.start).timestamp())
-        end_ts = int(datetime.datetime.fromisoformat(args.end).timestamp())
-    else:
-        end_ts = int(time.time())
-        start_ts = end_ts - args.days * 86400
-
-    console = Console()
-    console.print(f"[cyan]Fetching underlying candles from {start_ts} to {end_ts}...[/cyan]")
-    candles = fetch_underlying_candles(start_ts, end_ts)
-    console.print(f"[green]Loaded {len(candles)} 3h candles.[/green]")
-
+    
+    # Handle min-premium override
     cfg = CONFIG if args.min_premium is None else replace(CONFIG, min_premium_usd=args.min_premium)
-    console.print(f"[cyan]Using MIN_PREMIUM={cfg.min_premium_usd}[/cyan]")
-    console.print(f"[cyan]Initial Margin: {args.initial_margin}[/cyan]")
-
+    
+    # Get initial capital interactively if not provided
+    initial_capital = args.capital
+    if initial_capital is None:
+        try:
+            capital_input = input("Enter initial capital (e.g., 100000 for ₹100,000 or $100,000): ")
+            initial_capital = float(capital_input.replace(",", "").replace("₹", "").replace("$", ""))
+        except (ValueError, EOFError):
+            console.print("[red]Invalid capital input. Using default: $10,000[/red]")
+            initial_capital = 10000.0
+    
+    # Determine which years to backtest
+    if args.year:
+        years = [args.year]
+    elif args.years:
+        years = [int(y.strip()) for y in args.years.split(",")]
+    elif args.compare:
+        # Default years for comparison
+        current_year = datetime.datetime.now().year
+        years = list(range(current_year - 3, current_year))
+        years = [y for y in years if y >= 2020]  # Only recent years
+    else:
+        # Interactive year selection
+        console.print("\nSelect backtest year:")
+        console.print("1. 2024")
+        console.print("2. 2025") 
+        console.print("3. 2026")
+        console.print("4. Compare all years")
+        console.print("5. Custom year")
+        
+        try:
+            choice = input("Enter choice (1-5): ").strip()
+            if choice == "1":
+                years = [2024]
+            elif choice == "2":
+                years = [2025]
+            elif choice == "3":
+                years = [2026]
+            elif choice == "4":
+                years = [2024, 2025, 2026]
+            elif choice == "5":
+                custom_year = int(input("Enter year (e.g., 2024): "))
+                years = [custom_year]
+            else:
+                console.print("[red]Invalid choice. Using 2024.[/red]")
+                years = [2024]
+        except (ValueError, EOFError):
+            console.print("[red]Invalid input. Using 2024.[/red]")
+            years = [2024]
+    
+    console.print(f"\n[green]Initial Capital: ${initial_capital:,.2f}[/green]")
+    console.print(f"[green]Selected Years: {years}[/green]")
+    
+    # Warn about realistic mode
     if args.mode == "realistic":
-        console.print("[yellow]WARNING: 'realistic' mode requires HistoricalOptionDataSource to be "
-              "implemented against confirmed-available cached data (see run_diagnostic.py). "
-              "It currently raises NotImplementedError until that's wired up.[/yellow]")
-
-    result = run_backtest(candles, args.mode, cfg, args.initial_margin)
-    print_beautiful_output(result)
-
-    if result["summary"]["total_trades"] == 0:
-        max_seen = result["summary"].get("max_skipped_premium_seen")
-        if max_seen is not None:
-            console.print(
-                f"\n[yellow]No trades completed. The highest premium seen on skipped signals was "
-                f"{max_seen}, below MIN_PREMIUM={cfg.min_premium_usd}. "
-                f"Try lowering --min-premium for reconstructed-mode tests.[/yellow]"
-            )
+        console.print("[yellow]WARNING: 'realistic' mode uses historical option data.")
+        console.print("Limited historical data may affect results.[/yellow]")
+    
+    # Run backtests
+    if len(years) == 1:
+        result = run_year_backtest(years[0], initial_capital, args.mode)
+        print_beautiful_output(result)
+        
+        if result["summary"]["total_trades"] == 0:
+            max_seen = result["summary"].get("max_skipped_premium_seen")
+            if max_seen is not None:
+                console.print(
+                    f"\n[yellow]No trades completed. The highest premium seen on skipped signals was "
+                    f"{max_seen}, below MIN_PREMIUM={cfg.min_premium_usd}. "
+                    f"Try lowering --min-premium for reconstructed-mode tests.[/yellow]"
+                )
+    else:
+        compare_years(years, initial_capital, args.mode)
 
 
 if __name__ == "__main__":

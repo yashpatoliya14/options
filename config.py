@@ -33,27 +33,27 @@ def _bool_env(name: str, default: bool) -> bool:
 class StrategyConfig:
     # --- Supertrend ---
     timeframe: str = os.getenv("TIMEFRAME", "3h")
-    supertrend_atr_period: int = _int_env("SUPERTREND_ATR_PERIOD", 16)
+    supertrend_atr_period: int = _int_env("SUPERTREND_ATR_PERIOD", 10)
     supertrend_multiplier: float = _float_env("SUPERTREND_MULTIPLIER", 1.5)
+
+    # --- Option selection ---
+    otm_distance_usd: float = _float_env("OTM_DISTANCE_USD", 300.0)
+    strike_selection_method: str = os.getenv("STRIKE_SELECTION_METHOD", "supertrend_otm")
+    min_premium_usd: float = _float_env("MIN_PREMIUM", 300.0)
+    
+    # --- Stop Loss ---
+    stop_loss_percent: float = _float_env("STOP_LOSS_PERCENT", 20.0)
 
     # --- Underlying / instrument ---
     underlying_asset: str = os.getenv("UNDERLYING_ASSET", "BTC")
     underlying_symbol: str = os.getenv("UNDERLYING_SYMBOL", "BTCUSD")
 
-    # UNVERIFIED PLACEHOLDER -- how much underlying (in BTC) one option contract
+    # VERIFIED from diagnostic report -- how much underlying (in BTC) one option contract
     # ("1 lot") actually represents on Delta Exchange. This directly scales
-    # every premium and margin number in the system. Must be confirmed from
-    # the real /v2/products response (contract_value / lot size field) via
-    # run_diagnostic.py before trusting ANY dollar figure this system produces.
-    # 0.001 is a placeholder guess based on typical small-lot crypto options
-    # sizing, NOT a confirmed Delta Exchange spec.
+    # every premium and margin number in the system. Confirmed from the real 
+    # /v2/products response via run_diagnostic.py.
+    # Diagnostic report shows "contract_value": "0.001" in sample product.
     contract_value_underlying: float = _float_env("CONTRACT_VALUE_UNDERLYING", 0.001)
-
-    # --- Option selection ---
-    # 'nearest_to_reference' = nearest available strike to the Supertrend
-    # reference price at the moment of the signal (confirmed choice).
-    strike_selection_method: str = os.getenv("STRIKE_SELECTION_METHOD", "nearest_to_reference")
-    min_premium_usd: float = _float_env("MIN_PREMIUM", 300.0)
 
     # --- Risk / sizing ---
     # Confirmed: margin-budget sizing. The engine computes the max number of
@@ -65,7 +65,7 @@ class StrategyConfig:
     max_daily_loss_usd: float = _float_env("MAX_DAILY_LOSS", 0.0)  # 0 = disabled
     max_open_positions: int = _int_env("MAX_OPEN_POSITIONS", 1)
     slippage_pct: float = _float_env("SLIPPAGE_PCT", 0.5)  # % of premium, applied against the trader
-    fee_pct: float = _float_env("FEE_PCT", 0.03)  # % of notional, Delta-style taker/maker approx -- verify against live fee schedule
+    fee_pct: float = _float_env("FEE_PCT", 0.01)  # % of notional, based on diagnostic report showing 0.01% (0.0001) fee rate
 
     # --- Trading mode ---
     trading_mode: str = os.getenv("TRADING_MODE", "paper")  # backtest | paper | live

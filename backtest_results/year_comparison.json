@@ -1,0 +1,91 @@
+{
+  "initial_capital": 1000.0,
+  "data_mode": "reconstructed",
+  "years": [
+    2024,
+    2025,
+    2026
+  ],
+  "results": {
+    "2024": {
+      "data_mode": "reconstructed",
+      "data_mode_warning": "RECONSTRUCTED MODE: option premiums are Black-Scholes theoretical estimates using an assumed flat implied volatility, not real historical bid/ask data. Treat P&L figures as directional/illustrative only, not a reliable estimate of real trading results.",
+      "total_trades": 2,
+      "winning_trades": 1,
+      "losing_trades": 1,
+      "win_rate_pct": 50.0,
+      "gross_pnl": 2.23,
+      "total_fees": 0.1,
+      "net_pnl": 2.14,
+      "average_trade_pnl": 1.07,
+      "max_drawdown": -0.75,
+      "profit_factor": 3.8533333333333335,
+      "sharpe_ratio_per_trade": 0.588,
+      "average_holding_time_hours": 63.0,
+      "largest_winning_trade": 2.89,
+      "largest_losing_trade": -0.75,
+      "monthly_pnl": {
+        "2024-01": 2.14
+      },
+      "signal_changes": 163,
+      "skipped_signals": 0,
+      "skip_reasons": {},
+      "max_skipped_premium_seen": null
+    },
+    "2025": {
+      "data_mode": "reconstructed",
+      "data_mode_warning": "RECONSTRUCTED MODE: option premiums are Black-Scholes theoretical estimates using an assumed flat implied volatility, not real historical bid/ask data. Treat P&L figures as directional/illustrative only, not a reliable estimate of real trading results.",
+      "total_trades": 36,
+      "winning_trades": 22,
+      "losing_trades": 14,
+      "win_rate_pct": 61.11,
+      "gross_pnl": 13.16,
+      "total_fees": 1.67,
+      "net_pnl": 11.49,
+      "average_trade_pnl": 0.32,
+      "max_drawdown": -7.58,
+      "profit_factor": 1.4691710902409143,
+      "sharpe_ratio_per_trade": 0.162,
+      "average_holding_time_hours": 241.33,
+      "largest_winning_trade": 3.11,
+      "largest_losing_trade": -3.83,
+      "monthly_pnl": {
+        "2025-01": -1.21,
+        "2025-02": 3.92,
+        "2025-05": 3.05,
+        "2025-06": 1.3,
+        "2025-11": 2.7,
+        "2025-12": 1.73
+      },
+      "signal_changes": 182,
+      "skipped_signals": 0,
+      "skip_reasons": {},
+      "max_skipped_premium_seen": null
+    },
+    "2026": {
+      "data_mode": "reconstructed",
+      "data_mode_warning": "RECONSTRUCTED MODE: option premiums are Black-Scholes theoretical estimates using an assumed flat implied volatility, not real historical bid/ask data. Treat P&L figures as directional/illustrative only, not a reliable estimate of real trading results.",
+      "total_trades": 8,
+      "winning_trades": 4,
+      "losing_trades": 4,
+      "win_rate_pct": 50.0,
+      "gross_pnl": 0.2,
+      "total_fees": 0.39,
+      "net_pnl": -0.18,
+      "average_trade_pnl": -0.02,
+      "max_drawdown": -6.5,
+      "profit_factor": 0.9723076923076923,
+      "sharpe_ratio_per_trade": -0.012,
+      "average_holding_time_hours": 75.75,
+      "largest_winning_trade": 2.26,
+      "largest_losing_trade": -3.44,
+      "monthly_pnl": {
+        "2026-01": -0.18
+      },
+      "signal_changes": 104,
+      "skipped_signals": 0,
+      "skip_reasons": {},
+      "max_skipped_premium_seen": null
+    }
+  }
+}

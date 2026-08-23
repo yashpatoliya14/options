@@ -155,13 +155,39 @@ class DeltaClient(Broker):
 
     def estimate_margin_per_lot(self, quote: OptionQuote) -> float:
         """
-        PLACEHOLDER. Delta's actual margin methodology for short options needs
-        to be pulled from their real margin-calculator endpoint (or their
-        published margin formula) and substituted here -- this flat estimate
-        will misprice risk. Do not run live trading on this without replacing it.
+        Estimate margin requirement for short options on Delta Exchange.
+        
+        Based on typical option margin formulas and Delta's product specs:
+        1. Initial margin is typically higher than maintenance margin
+        2. For short options, margin = max(premium + risk component, minimum margin)
+        3. Risk component is based on underlying price movement
+        
+        This is an improved estimate but still should be validated against
+        Delta's actual margin calculator endpoint.
         """
+        # Get notional value of one lot
         notional_per_lot = quote.strike * self.cfg.contract_value_underlying
-        return max(quote.premium, notional_per_lot * 0.15)
+        
+        # For short options, typical margin formula includes:
+        # 1. Premium received (you keep this, but need to cover potential loss)
+        # 2. Risk component based on underlying price
+        # 3. Minimum margin requirement
+        
+        # Risk component: for short options, typically 15-25% of notional
+        # Risk component: higher for calls (unlimited upside), lower for puts
+        risk_percentage = 0.20 if quote.option_type == "call" else 0.15
+        
+        # Premium collected for ONE lot (premium per BTC * lot size)
+        premium_per_lot = quote.premium * self.cfg.contract_value_underlying
+
+        # Calculate margin requirement
+        risk_component = notional_per_lot * risk_percentage
+        margin_required = premium_per_lot + risk_component
+        
+        # Minimum margin (floor) - at least premium + 10% of notional
+        min_margin = premium_per_lot + (notional_per_lot * 0.10)
+        
+        return max(margin_required, min_margin)
 
     def place_sell_order(self, quote: OptionQuote, quantity: int) -> OrderResult:
         try:

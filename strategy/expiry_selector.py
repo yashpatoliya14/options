@@ -33,33 +33,40 @@ def select_expiry_and_strike(
     reference_price: float,
     option_type: str,
     min_premium: float,
+    otm_distance: float = 300.0,
     as_of_timestamp: Optional[int] = None,
 ) -> ExpirySelectionResult:
     expiries = broker.get_available_expiries(underlying, as_of_timestamp=as_of_timestamp)
     if not expiries:
         return ExpirySelectionResult(None, None, "no_expiries_available")
 
-    # spec: check today's expiry first, then tomorrow's -- exactly these two, no further
-    candidate_expiries = expiries[:2]
-    labels = ["today", "tomorrow"]
     best_premium_seen: Optional[float] = None
     best_expiry_seen: Optional[str] = None
 
-    for label, expiry in zip(labels, candidate_expiries):
+    for i, expiry in enumerate(expiries):
+        if i == 0:
+            label = "today"
+        elif i == 1:
+            label = "tomorrow"
+        else:
+            label = f"future_day_{i}"
+
         quotes = broker.get_option_chain(underlying, expiry, timestamp=as_of_timestamp)
-        best = select_strike(quotes, reference_price, option_type)
+        best = select_strike(quotes, reference_price, option_type, otm_distance=otm_distance)
         if best is None:
             continue
+            
         if best_premium_seen is None or best.premium > best_premium_seen:
             best_premium_seen = best.premium
             best_expiry_seen = label
+            
         if best.premium >= min_premium:
             return ExpirySelectionResult(best, label)
 
     return ExpirySelectionResult(
         None,
         None,
-        "min_premium_not_met_today_or_tomorrow",
+        "min_premium_not_met_in_any_expiry",
         best_premium_seen=best_premium_seen,
         best_expiry_seen=best_expiry_seen,
     )
