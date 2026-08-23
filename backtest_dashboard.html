@@ -1,0 +1,2079 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Short Strangle Backtest Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-card: #161b22;
+            --bg-hover: #1c2129;
+            --text-primary: #f0f6fc;
+            --text-secondary: #c9d1d9;
+            --text-muted: #8b949e;
+            --border: #30363d;
+            --green: #00E676;
+            --red: #FF5252;
+            --cyan: #00BCD4;
+            --amber: #FFD740;
+            --purple: #B388FF;
+            --gradient-cyan: linear-gradient(135deg, #00BCD4, #0097A7);
+            --gradient-green: linear-gradient(135deg, #00E676, #00C853);
+            --gradient-red: linear-gradient(135deg, #FF5252, #D32F2F);
+            --gradient-amber: linear-gradient(135deg, #FFD740, #FFC107);
+            --gradient-purple: linear-gradient(135deg, #B388FF, #7C4DFF);
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-secondary);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+        
+        .dashboard {
+            max-width: 1440px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+        
+        /* Header */
+        .header {
+            text-align: center;
+            padding: 40px 20px 30px;
+            margin-bottom: 30px;
+            background: linear-gradient(135deg, rgba(0,188,212,0.08) 0%, rgba(179,136,255,0.08) 100%);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            position: relative;
+            overflow: hidden;
+        }
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--cyan), var(--purple), var(--cyan));
+        }
+        .header h1 {
+            font-size: 32px;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--cyan), var(--purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 8px;
+            letter-spacing: -0.5px;
+        }
+        .header .subtitle {
+            font-size: 15px;
+            color: var(--text-muted);
+            font-weight: 400;
+        }
+        .header .subtitle span {
+            color: var(--cyan);
+            font-weight: 600;
+        }
+        
+        /* Metric Cards */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 30px;
+        }
+        .metric-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            transition: all 0.2s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .metric-card:hover {
+            border-color: var(--cyan);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0,188,212,0.1);
+        }
+        .metric-card .label {
+            font-size: 12px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+        .metric-card .value {
+            font-size: 24px;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text-primary);
+        }
+        .metric-card .value.positive { color: var(--green); }
+        .metric-card .value.negative { color: var(--red); }
+        .metric-card .value.cyan { color: var(--cyan); }
+        .metric-card .value.amber { color: var(--amber); }
+        .metric-card .value.purple { color: var(--purple); }
+        .metric-card .accent-bar {
+            position: absolute;
+            bottom: 0; left: 0; right: 0;
+            height: 3px;
+        }
+        
+        /* Section Title */
+        .section-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin: 35px 0 18px;
+            padding-left: 12px;
+            border-left: 3px solid var(--cyan);
+        }
+        
+        /* Chart Container */
+        .chart-container {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            transition: border-color 0.2s;
+        }
+        .chart-container:hover {
+            border-color: rgba(0,188,212,0.3);
+        }
+        
+        .charts-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        /* Tables */
+        .table-container {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+        .table-scroll {
+            overflow-x: auto;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        thead {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        th {
+            background: #1c2129;
+            color: var(--text-primary);
+            font-weight: 600;
+            padding: 14px 12px;
+            text-align: left;
+            border-bottom: 2px solid var(--border);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+        }
+        td {
+            padding: 10px 12px;
+            border-bottom: 1px solid rgba(48,54,61,0.5);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+        tr:hover td {
+            background: var(--bg-hover);
+        }
+        .positive { color: var(--green); font-weight: 600; }
+        .negative { color: var(--red); font-weight: 600; }
+        
+        /* Badges */
+        .badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+        }
+        .badge-cyan { background: rgba(0,188,212,0.15); color: var(--cyan); }
+        .badge-red { background: rgba(255,82,82,0.15); color: var(--red); }
+        .badge-amber { background: rgba(255,215,64,0.15); color: var(--amber); }
+        .badge-purple { background: rgba(179,136,255,0.15); color: var(--purple); }
+        .badge-green { background: rgba(0,230,118,0.15); color: var(--green); }
+        
+        /* Nav Tabs */
+        .tab-nav {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 0;
+            padding: 12px 16px 0;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-bottom: none;
+            border-radius: 12px 12px 0 0;
+        }
+        .tab-btn {
+            padding: 10px 20px;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-family: 'Inter', sans-serif;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            border-radius: 8px 8px 0 0;
+            transition: all 0.2s;
+            border-bottom: 2px solid transparent;
+        }
+        .tab-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+        .tab-btn.active {
+            color: var(--cyan);
+            border-bottom-color: var(--cyan);
+            background: var(--bg-hover);
+        }
+        .tab-content {
+            display: none;
+            border: 1px solid var(--border);
+            border-top: none;
+            border-radius: 0 0 12px 12px;
+        }
+        .tab-content.active { display: block; }
+        
+        /* Footer */
+        .footer {
+            text-align: center;
+            padding: 30px 20px;
+            color: var(--text-muted);
+            font-size: 12px;
+            border-top: 1px solid var(--border);
+            margin-top: 40px;
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+            .charts-row { grid-template-columns: 1fr; }
+            .header h1 { font-size: 24px; }
+            .dashboard { padding: 12px; }
+        }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: var(--bg-primary); }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+        
+        /* Search/Filter */
+        .filter-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            background: var(--bg-card);
+        }
+        .filter-input {
+            flex: 1;
+            padding: 8px 14px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: 'Inter', sans-serif;
+            font-size: 13px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .filter-input:focus { border-color: var(--cyan); }
+        .filter-input::placeholder { color: var(--text-muted); }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <!-- Header -->
+        <div class="header">
+            <h1>⚡ Short Strangle Backtest Dashboard</h1>
+            <p class="subtitle">
+                <span>BTCUSDT</span> &bull; 10% OTM &bull; 30% Stop-Loss &bull; 8% Slippage &bull; 
+                Aug 23, 2025 → Aug 20, 2026 &bull;
+                <span>58 trades</span>
+            </p>
+        </div>
+        
+        <!-- Summary Metric Cards -->
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="label">Cumulative P&L</div>
+                <div class="value positive">$4,227.52</div>
+                <div class="accent-bar" style="background: var(--gradient-green)"></div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Win Rate</div>
+                <div class="value cyan">60.3%</div>
+                <div class="accent-bar" style="background: var(--gradient-cyan)"></div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Total Trades</div>
+                <div class="value" style="color: var(--text-primary)">58</div>
+                <div class="accent-bar" style="background: var(--gradient-cyan)"></div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Profit Factor</div>
+                <div class="value purple">1.80</div>
+                <div class="accent-bar" style="background: var(--gradient-purple)"></div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Sharpe Ratio</div>
+                <div class="value amber">1.57</div>
+                <div class="accent-bar" style="background: var(--gradient-amber)"></div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Max Drawdown</div>
+                <div class="value negative">$-1,452.12</div>
+                <div class="accent-bar" style="background: var(--gradient-red)"></div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Avg Win</div>
+                <div class="value positive">$272.24</div>
+                <div class="accent-bar" style="background: var(--gradient-green)"></div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Avg Loss</div>
+                <div class="value negative">$-230.48</div>
+                <div class="accent-bar" style="background: var(--gradient-red)"></div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Best Trade</div>
+                <div class="value positive">$848.69</div>
+                <div class="accent-bar" style="background: var(--gradient-green)"></div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Worst Trade</div>
+                <div class="value negative">$-673.02</div>
+                <div class="accent-bar" style="background: var(--gradient-red)"></div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Expectancy</div>
+                <div class="value positive">$72.89</div>
+                <div class="accent-bar" style="background: var(--gradient-green)"></div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Total Slippage</div>
+                <div class="value negative">$5,875.21</div>
+                <div class="accent-bar" style="background: var(--gradient-red)"></div>
+            </div>
+        </div>
+        
+        <!-- Secondary Metrics Row -->
+        <div class="metrics-grid" style="grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); margin-bottom: 30px;">
+            <div class="metric-card">
+                <div class="label">Wins</div>
+                <div class="value positive">35</div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Losses</div>
+                <div class="value negative">23</div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Max Win Streak</div>
+                <div class="value positive">7</div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Max Loss Streak</div>
+                <div class="value negative">4</div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Gross Profit</div>
+                <div class="value positive">$9,528.53</div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Gross Loss</div>
+                <div class="value negative">$5,301.02</div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Avg P&L / Trade</div>
+                <div class="value positive">$72.89</div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Total Premium</div>
+                <div class="value cyan">$44,648.84</div>
+            </div>
+        </div>
+        
+        <!-- Equity Curve -->
+        <h2 class="section-title">Performance Charts</h2>
+        <div class="chart-container">
+            <div style="height:400px; width:100%;">                            <div id="equity-chart" class="plotly-graph-div" style="height:100%; width:100%;"></div>            <script>                window.PLOTLYENV=window.PLOTLYENV || {};                                if (document.getElementById("equity-chart")) {                    Plotly.newPlot(                        "equity-chart",                        [{"customdata":[[1,198.93941282678463],[2,794.2288871842695],[3,814.127530845167],[4,848.6937439040306],[5,228.43988803975424],[6,-79.1213044031312],[7,-74.38807540107126],[8,-673.0208579162587],[9,213.54314577327403],[10,-78.42794473867815],[11,51.06952086021629],[12,197.20732358009852],[13,197.85747673980248],[14,133.74889538782074],[15,-557.995059549608],[16,168.46383285429576],[17,-273.0872715661244],[18,-115.15889650418602],[19,-48.32620760907493],[20,148.83194654625922],[21,-99.33486766265192],[22,90.51905662203174],[23,-136.44656897221228],[24,179.86855602810778],[25,130.4944722402236],[26,92.08259111011029],[27,101.7415893336196],[28,81.99516296760453],[29,-49.34869819479594],[30,-73.66117803205621],[31,-47.22293344950698],[32,-581.1365012256938],[33,133.58889290391105],[34,119.80211404002192],[35,68.92139763778775],[36,-23.718789895890712],[37,-478.1103899609309],[38,124.50934479198683],[39,570.8390094478511],[40,567.5378486883332],[41,591.9948011792386],[42,578.0799968061594],[43,133.74447587365495],[44,134.71804760489115],[45,-382.5018778182599],[46,67.4781415644652],[47,-58.93300481216538],[48,-433.2817672067401],[49,118.09246050148326],[50,-379.20739819097054],[51,-383.76243586528176],[52,460.23631341584286],[53,-17.23482826934699],[54,119.1790673414928],[55,480.246787088789],[56,117.51165645920352],[57,470.1991172043784],[58,-257.5902352249088]],"fill":"tozeroy","fillcolor":"rgba(0,188,212,0.1)","hovertemplate":"\u003cb\u003eTrade #%{customdata[0]}\u003c\u002fb\u003e\u003cbr\u003eDate: %{x}\u003cbr\u003eCumulative P&L: $%{y:,.2f}\u003cbr\u003eTrade P&L: $%{customdata[1]:,.2f}\u003cextra\u003e\u003c\u002fextra\u003e","line":{"color":"#00BCD4","width":2.5},"mode":"lines","name":"Cumulative P&L","x":["2025-08-30T08:00:00.000000000","2025-09-06T09:00:00.000000000","2025-09-13T10:00:00.000000000","2025-09-20T11:00:00.000000000","2025-09-27T12:00:00.000000000","2025-10-04T13:00:00.000000000","2025-10-11T14:00:00.000000000","2025-10-12T19:00:00.000000000","2025-10-19T20:00:00.000000000","2025-10-26T21:00:00.000000000","2025-11-02T22:00:00.000000000","2025-11-09T23:00:00.000000000","2025-11-17T00:00:00.000000000","2025-11-24T01:00:00.000000000","2025-11-24T20:00:00.000000000","2025-12-01T21:00:00.000000000","2025-12-08T22:00:00.000000000","2025-12-15T23:00:00.000000000","2025-12-23T00:00:00.000000000","2025-12-30T01:00:00.000000000","2026-01-06T02:00:00.000000000","2026-01-13T03:00:00.000000000","2026-01-20T04:00:00.000000000","2026-01-27T05:00:00.000000000","2026-02-03T06:00:00.000000000","2026-02-10T07:00:00.000000000","2026-02-17T08:00:00.000000000","2026-02-24T09:00:00.000000000","2026-03-03T10:00:00.000000000","2026-03-10T11:00:00.000000000","2026-03-17T12:00:00.000000000","2026-03-18T14:00:00.000000000","2026-03-25T15:00:00.000000000","2026-04-01T16:00:00.000000000","2026-04-08T17:00:00.000000000","2026-04-15T18:00:00.000000000","2026-04-17T13:00:00.000000000","2026-04-24T14:00:00.000000000","2026-05-01T15:00:00.000000000","2026-05-08T16:00:00.000000000","2026-05-15T17:00:00.000000000","2026-05-22T18:00:00.000000000","2026-05-29T19:00:00.000000000","2026-06-05T20:00:00.000000000","2026-06-08T00:00:00.000000000","2026-06-15T01:00:00.000000000","2026-06-22T02:00:00.000000000","2026-06-23T08:00:00.000000000","2026-06-30T09:00:00.000000000","2026-07-01T21:00:00.000000000","2026-07-02T12:00:00.000000000","2026-07-09T13:00:00.000000000","2026-07-16T14:00:00.000000000","2026-07-23T15:00:00.000000000","2026-07-30T16:00:00.000000000","2026-08-06T17:00:00.000000000","2026-08-13T18:00:00.000000000","2026-08-20T19:00:00.000000000"],"y":{"dtype":"f8","bdata":"dA99qw\u002feaEAnG62tWAmPQHiySO4uPZxAdQCLqfq\u002fpEDAUYzi24imQCL578ad6qVAK1EeFddVpUDIyDpnzBOgQCCzbn7ivqFA5BDcYgcioUDuChn7KoihQFsDaiGVEqNAbPiaKEyepEANVtKXy6mlQMZXYB\u002fOTaFAy0\u002fgmrueokALewTsjnygQGASRSJ7LJ9ApP\u002fmGC1rnkA6UFmBQF+gQCQyJhsqMZ9A3jldz55NoEB+B1pVdHmeQK4yDd52pKBAw1uECXSpoUB9JeZSnmGiQGgDfwQaLaNAgiN\u002fihfRo0DdRe0BZW6jQNX0\u002f3sS26JAM6+qV6B8okCGLVvotOSbQBr6GO8P+51AVAB7TEXan0D84atn+nagQOUycWKKR6BAxYXRuqMWmUCo5X9MrQibQPBp5TgE+qFAHafMmRdppkDRLGHwFAmrQEyRuOU9ja9AqNLUiF1MsECjlsxaFdOwQD8NeL8pqa5AuKlwjh4wr0AyI6LbQLquQCGP15ewV6tANyvT7t9DrEBHrLq+dU2pQOpGvGDvTaZAN7jOXmjmqUAshmUj8MOpQCl1HNJLsqpAAgz9LMpyrkAk6tIk0F2vQPLNwQsbhbFABPIZ8oODsEA="},"type":"scatter"}],                        {"template":{"data":{"histogram2dcontour":[{"type":"histogram2dcontour","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"choropleth":[{"type":"choropleth","colorbar":{"outlinewidth":0,"ticks":""}}],"histogram2d":[{"type":"histogram2d","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"heatmap":[{"type":"heatmap","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"contourcarpet":[{"type":"contourcarpet","colorbar":{"outlinewidth":0,"ticks":""}}],"contour":[{"type":"contour","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"surface":[{"type":"surface","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"mesh3d":[{"type":"mesh3d","colorbar":{"outlinewidth":0,"ticks":""}}],"scatter":[{"fillpattern":{"fillmode":"overlay","size":10,"solidity":0.2},"type":"scatter"}],"parcoords":[{"type":"parcoords","line":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterpolargl":[{"type":"scatterpolargl","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"bar":[{"error_x":{"color":"#2a3f5f"},"error_y":{"color":"#2a3f5f"},"marker":{"line":{"color":"#E5ECF6","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"bar"}],"scattergeo":[{"type":"scattergeo","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterpolar":[{"type":"scatterpolar","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"histogram":[{"marker":{"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"histogram"}],"scattergl":[{"type":"scattergl","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatter3d":[{"type":"scatter3d","line":{"colorbar":{"outlinewidth":0,"ticks":""}},"marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattermap":[{"type":"scattermap","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattermapbox":[{"type":"scattermapbox","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterternary":[{"type":"scatterternary","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattercarpet":[{"type":"scattercarpet","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"carpet":[{"aaxis":{"endlinecolor":"#2a3f5f","gridcolor":"white","linecolor":"white","minorgridcolor":"white","startlinecolor":"#2a3f5f"},"baxis":{"endlinecolor":"#2a3f5f","gridcolor":"white","linecolor":"white","minorgridcolor":"white","startlinecolor":"#2a3f5f"},"type":"carpet"}],"table":[{"cells":{"fill":{"color":"#EBF0F8"},"line":{"color":"white"}},"header":{"fill":{"color":"#C8D4E3"},"line":{"color":"white"}},"type":"table"}],"barpolar":[{"marker":{"line":{"color":"#E5ECF6","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"barpolar"}],"pie":[{"automargin":true,"type":"pie"}]},"layout":{"autotypenumbers":"strict","colorway":["#636efa","#EF553B","#00cc96","#ab63fa","#FFA15A","#19d3f3","#FF6692","#B6E880","#FF97FF","#FECB52"],"font":{"color":"#2a3f5f"},"hovermode":"closest","hoverlabel":{"align":"left"},"paper_bgcolor":"white","plot_bgcolor":"#E5ECF6","polar":{"bgcolor":"#E5ECF6","angularaxis":{"gridcolor":"white","linecolor":"white","ticks":""},"radialaxis":{"gridcolor":"white","linecolor":"white","ticks":""}},"ternary":{"bgcolor":"#E5ECF6","aaxis":{"gridcolor":"white","linecolor":"white","ticks":""},"baxis":{"gridcolor":"white","linecolor":"white","ticks":""},"caxis":{"gridcolor":"white","linecolor":"white","ticks":""}},"coloraxis":{"colorbar":{"outlinewidth":0,"ticks":""}},"colorscale":{"sequential":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"sequentialminus":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"diverging":[[0,"#8e0152"],[0.1,"#c51b7d"],[0.2,"#de77ae"],[0.3,"#f1b6da"],[0.4,"#fde0ef"],[0.5,"#f7f7f7"],[0.6,"#e6f5d0"],[0.7,"#b8e186"],[0.8,"#7fbc41"],[0.9,"#4d9221"],[1,"#276419"]]},"xaxis":{"gridcolor":"white","linecolor":"white","ticks":"","title":{"standoff":15},"zerolinecolor":"white","automargin":true,"zerolinewidth":2},"yaxis":{"gridcolor":"white","linecolor":"white","ticks":"","title":{"standoff":15},"zerolinecolor":"white","automargin":true,"zerolinewidth":2},"scene":{"xaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2},"yaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2},"zaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2}},"shapedefaults":{"line":{"color":"#2a3f5f"}},"annotationdefaults":{"arrowcolor":"#2a3f5f","arrowhead":0,"arrowwidth":1},"geo":{"bgcolor":"white","landcolor":"#E5ECF6","subunitcolor":"white","showland":true,"showlakes":true,"lakecolor":"white"},"title":{"x":0.05},"mapbox":{"style":"light"}}},"title":{"font":{"size":18,"color":"#f0f6fc"},"text":"Equity Curve"},"font":{"family":"Inter, system-ui, sans-serif","color":"#c9d1d9","size":12},"margin":{"l":50,"r":30,"t":50,"b":40},"xaxis":{"title":{"text":"Date"},"gridcolor":"#21262d","zerolinecolor":"#21262d"},"yaxis":{"title":{"text":"Cumulative P&L ($)"},"gridcolor":"#21262d","zerolinecolor":"#21262d"},"height":400,"paper_bgcolor":"rgba(0,0,0,0)","plot_bgcolor":"#0d1117"},                        {"responsive": true}                    )                };            </script>        </div>
+        </div>
+        
+        <!-- Drawdown + Distribution -->
+        <div class="charts-row">
+            <div class="chart-container">
+                <div style="height:300px; width:100%;">                            <div id="drawdown-chart" class="plotly-graph-div" style="height:100%; width:100%;"></div>            <script>                window.PLOTLYENV=window.PLOTLYENV || {};                                if (document.getElementById("drawdown-chart")) {                    Plotly.newPlot(                        "drawdown-chart",                        [{"fill":"tozeroy","fillcolor":"rgba(255,82,82,0.15)","hovertemplate":"Date: %{x}\u003cbr\u003eDrawdown: $%{y:,.2f}\u003cextra\u003e\u003c\u002fextra\u003e","line":{"color":"#FF5252","width":2},"mode":"lines","name":"Drawdown","x":["2025-08-30T08:00:00.000000000","2025-09-06T09:00:00.000000000","2025-09-13T10:00:00.000000000","2025-09-20T11:00:00.000000000","2025-09-27T12:00:00.000000000","2025-10-04T13:00:00.000000000","2025-10-11T14:00:00.000000000","2025-10-12T19:00:00.000000000","2025-10-19T20:00:00.000000000","2025-10-26T21:00:00.000000000","2025-11-02T22:00:00.000000000","2025-11-09T23:00:00.000000000","2025-11-17T00:00:00.000000000","2025-11-24T01:00:00.000000000","2025-11-24T20:00:00.000000000","2025-12-01T21:00:00.000000000","2025-12-08T22:00:00.000000000","2025-12-15T23:00:00.000000000","2025-12-23T00:00:00.000000000","2025-12-30T01:00:00.000000000","2026-01-06T02:00:00.000000000","2026-01-13T03:00:00.000000000","2026-01-20T04:00:00.000000000","2026-01-27T05:00:00.000000000","2026-02-03T06:00:00.000000000","2026-02-10T07:00:00.000000000","2026-02-17T08:00:00.000000000","2026-02-24T09:00:00.000000000","2026-03-03T10:00:00.000000000","2026-03-10T11:00:00.000000000","2026-03-17T12:00:00.000000000","2026-03-18T14:00:00.000000000","2026-03-25T15:00:00.000000000","2026-04-01T16:00:00.000000000","2026-04-08T17:00:00.000000000","2026-04-15T18:00:00.000000000","2026-04-17T13:00:00.000000000","2026-04-24T14:00:00.000000000","2026-05-01T15:00:00.000000000","2026-05-08T16:00:00.000000000","2026-05-15T17:00:00.000000000","2026-05-22T18:00:00.000000000","2026-05-29T19:00:00.000000000","2026-06-05T20:00:00.000000000","2026-06-08T00:00:00.000000000","2026-06-15T01:00:00.000000000","2026-06-22T02:00:00.000000000","2026-06-23T08:00:00.000000000","2026-06-30T09:00:00.000000000","2026-07-01T21:00:00.000000000","2026-07-02T12:00:00.000000000","2026-07-09T13:00:00.000000000","2026-07-16T14:00:00.000000000","2026-07-23T15:00:00.000000000","2026-07-30T16:00:00.000000000","2026-08-06T17:00:00.000000000","2026-08-13T18:00:00.000000000","2026-08-20T19:00:00.000000000"],"y":{"dtype":"f8","bdata":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMATi3PDx1PAUAng1kwwY8DgI0btPdSJwIB6dpDlJ4PAcAPB\u002flGbhcBIG82dwwKEwChzEgk2snvAQJUVn\u002fuobsBgdj9XCeJbwOjnrww37ITAqA9gPQJRf8DUWh\u002faMzGIwEAip0V5yovAuEdjWBVNjcAYBsyEbaaIwLji5FMbwYvAiF+8TPTsiMAEOH3fhjCNwEh8\u002fBGUkYfA9NcfZJ99g8AMsZg+9pyAwMByavAO3nrA8HFpwCK+dcAYX\u002fgEt9N4wFjnYjRLbn3ANIqGK+4wgMD6db3cAi2RwMxS\u002f6tPLY7AWEY78eRuisAQv4HrhUeIwGx7bABGBYnAux1HChT7k8DYvZh4CgmSwECfm6ZeO4LAAKOqv0jEL8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADgACbEH6HfAcBxEOWGwc8CgULjPTl93wJR4BnfoOYnAPAgYGyuJhcD+Ab3tabGQwLjMual2sJbAPNQpWwn\u002fjsBonM5I6oiPwHTg8o17z4vAIArhRASbecAQGTKG1EJywAAAAAAAAAAA4L59mnEZcMA="},"type":"scatter"}],                        {"template":{"data":{"histogram2dcontour":[{"type":"histogram2dcontour","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"choropleth":[{"type":"choropleth","colorbar":{"outlinewidth":0,"ticks":""}}],"histogram2d":[{"type":"histogram2d","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"heatmap":[{"type":"heatmap","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"contourcarpet":[{"type":"contourcarpet","colorbar":{"outlinewidth":0,"ticks":""}}],"contour":[{"type":"contour","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"surface":[{"type":"surface","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"mesh3d":[{"type":"mesh3d","colorbar":{"outlinewidth":0,"ticks":""}}],"scatter":[{"fillpattern":{"fillmode":"overlay","size":10,"solidity":0.2},"type":"scatter"}],"parcoords":[{"type":"parcoords","line":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterpolargl":[{"type":"scatterpolargl","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"bar":[{"error_x":{"color":"#2a3f5f"},"error_y":{"color":"#2a3f5f"},"marker":{"line":{"color":"#E5ECF6","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"bar"}],"scattergeo":[{"type":"scattergeo","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterpolar":[{"type":"scatterpolar","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"histogram":[{"marker":{"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"histogram"}],"scattergl":[{"type":"scattergl","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatter3d":[{"type":"scatter3d","line":{"colorbar":{"outlinewidth":0,"ticks":""}},"marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattermap":[{"type":"scattermap","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattermapbox":[{"type":"scattermapbox","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterternary":[{"type":"scatterternary","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattercarpet":[{"type":"scattercarpet","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"carpet":[{"aaxis":{"endlinecolor":"#2a3f5f","gridcolor":"white","linecolor":"white","minorgridcolor":"white","startlinecolor":"#2a3f5f"},"baxis":{"endlinecolor":"#2a3f5f","gridcolor":"white","linecolor":"white","minorgridcolor":"white","startlinecolor":"#2a3f5f"},"type":"carpet"}],"table":[{"cells":{"fill":{"color":"#EBF0F8"},"line":{"color":"white"}},"header":{"fill":{"color":"#C8D4E3"},"line":{"color":"white"}},"type":"table"}],"barpolar":[{"marker":{"line":{"color":"#E5ECF6","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"barpolar"}],"pie":[{"automargin":true,"type":"pie"}]},"layout":{"autotypenumbers":"strict","colorway":["#636efa","#EF553B","#00cc96","#ab63fa","#FFA15A","#19d3f3","#FF6692","#B6E880","#FF97FF","#FECB52"],"font":{"color":"#2a3f5f"},"hovermode":"closest","hoverlabel":{"align":"left"},"paper_bgcolor":"white","plot_bgcolor":"#E5ECF6","polar":{"bgcolor":"#E5ECF6","angularaxis":{"gridcolor":"white","linecolor":"white","ticks":""},"radialaxis":{"gridcolor":"white","linecolor":"white","ticks":""}},"ternary":{"bgcolor":"#E5ECF6","aaxis":{"gridcolor":"white","linecolor":"white","ticks":""},"baxis":{"gridcolor":"white","linecolor":"white","ticks":""},"caxis":{"gridcolor":"white","linecolor":"white","ticks":""}},"coloraxis":{"colorbar":{"outlinewidth":0,"ticks":""}},"colorscale":{"sequential":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"sequentialminus":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"diverging":[[0,"#8e0152"],[0.1,"#c51b7d"],[0.2,"#de77ae"],[0.3,"#f1b6da"],[0.4,"#fde0ef"],[0.5,"#f7f7f7"],[0.6,"#e6f5d0"],[0.7,"#b8e186"],[0.8,"#7fbc41"],[0.9,"#4d9221"],[1,"#276419"]]},"xaxis":{"gridcolor":"white","linecolor":"white","ticks":"","title":{"standoff":15},"zerolinecolor":"white","automargin":true,"zerolinewidth":2},"yaxis":{"gridcolor":"white","linecolor":"white","ticks":"","title":{"standoff":15},"zerolinecolor":"white","automargin":true,"zerolinewidth":2},"scene":{"xaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2},"yaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2},"zaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2}},"shapedefaults":{"line":{"color":"#2a3f5f"}},"annotationdefaults":{"arrowcolor":"#2a3f5f","arrowhead":0,"arrowwidth":1},"geo":{"bgcolor":"white","landcolor":"#E5ECF6","subunitcolor":"white","showland":true,"showlakes":true,"lakecolor":"white"},"title":{"x":0.05},"mapbox":{"style":"light"}}},"title":{"font":{"size":18,"color":"#f0f6fc"},"text":"Underwater Drawdown"},"font":{"family":"Inter, system-ui, sans-serif","color":"#c9d1d9","size":12},"margin":{"l":50,"r":30,"t":50,"b":40},"xaxis":{"title":{"text":"Date"},"gridcolor":"#21262d","zerolinecolor":"#21262d"},"yaxis":{"title":{"text":"Drawdown ($)"},"gridcolor":"#21262d","zerolinecolor":"#21262d"},"height":300,"paper_bgcolor":"rgba(0,0,0,0)","plot_bgcolor":"#0d1117"},                        {"responsive": true}                    )                };            </script>        </div>
+            </div>
+            <div class="chart-container">
+                <div style="height:350px; width:100%;">                            <div id="dist-chart" class="plotly-graph-div" style="height:100%; width:100%;"></div>            <script>                window.PLOTLYENV=window.PLOTLYENV || {};                                if (document.getElementById("dist-chart")) {                    Plotly.newPlot(                        "dist-chart",                        [{"hovertemplate":"P&L Range: $%{x:,.0f}\u003cbr\u003eCount: %{y}\u003cextra\u003e\u003c\u002fextra\u003e","marker":{"color":"#00BCD4","line":{"color":"#0d1117","width":1}},"name":"P&L Distribution","nbinsx":30,"opacity":0.85,"x":{"dtype":"f8","bdata":"dA99qw\u002feaEBK183C1NGIQMpJ5C4FcYlA45yayYyFikCsFBWQE45sQMwTi3PDx1PA7P40OtaYUsCNIY63KgiFwIalPnNhsWpAjEdUcmObU8Bmgj4P5ohJQM+GD2WipmhACVEPc3C7aEAX2nXz9rdgQBz5x+H1b4HAV4D\u002ft9cOZUAApt52ZRFxwF87PlwrylzAclfCK8EpSMCDBl1On5piQP3kxnhu1VjAghlEOTihVkDsYQNLSg5hwO7uAjbLe2ZASZFyt9JPYEBMNzksSQVXQFq9GzN2b1lAUAMEwLB\u002fVEBSaXckoqxIwPcgqr1QalLAkmhRFYmcR8DAYfSNFymCwJ9k7jXYsmBAn2Mg1lXzXUA+Oswt+DpRQL2LV50CuDfAFIBDKMThfcAr\u002fuUamSBfQHLclUq21oFAs\u002fScg028gUDRFlJa9X+CQOqRXdWjEIJASkARv9K3YEBRf\u002fg++tZgQDoACbEH6HfAII8T35neUEBmoaGzbHdNwIugVB6CFHvAtoJz3+qFXUB998OAUbN3wOwq8+8y\u002fHfAa4qT8MfDfECIBZm0HTwxwJHf3dZ1y11AyLYE1\u002fIDfkA+xLv6vmBdQAWOhZUvY31A4759mnEZcMA="},"type":"histogram"}],                        {"template":{"data":{"histogram2dcontour":[{"type":"histogram2dcontour","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"choropleth":[{"type":"choropleth","colorbar":{"outlinewidth":0,"ticks":""}}],"histogram2d":[{"type":"histogram2d","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"heatmap":[{"type":"heatmap","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"contourcarpet":[{"type":"contourcarpet","colorbar":{"outlinewidth":0,"ticks":""}}],"contour":[{"type":"contour","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"surface":[{"type":"surface","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"mesh3d":[{"type":"mesh3d","colorbar":{"outlinewidth":0,"ticks":""}}],"scatter":[{"fillpattern":{"fillmode":"overlay","size":10,"solidity":0.2},"type":"scatter"}],"parcoords":[{"type":"parcoords","line":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterpolargl":[{"type":"scatterpolargl","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"bar":[{"error_x":{"color":"#2a3f5f"},"error_y":{"color":"#2a3f5f"},"marker":{"line":{"color":"#E5ECF6","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"bar"}],"scattergeo":[{"type":"scattergeo","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterpolar":[{"type":"scatterpolar","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"histogram":[{"marker":{"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"histogram"}],"scattergl":[{"type":"scattergl","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatter3d":[{"type":"scatter3d","line":{"colorbar":{"outlinewidth":0,"ticks":""}},"marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattermap":[{"type":"scattermap","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattermapbox":[{"type":"scattermapbox","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterternary":[{"type":"scatterternary","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattercarpet":[{"type":"scattercarpet","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"carpet":[{"aaxis":{"endlinecolor":"#2a3f5f","gridcolor":"white","linecolor":"white","minorgridcolor":"white","startlinecolor":"#2a3f5f"},"baxis":{"endlinecolor":"#2a3f5f","gridcolor":"white","linecolor":"white","minorgridcolor":"white","startlinecolor":"#2a3f5f"},"type":"carpet"}],"table":[{"cells":{"fill":{"color":"#EBF0F8"},"line":{"color":"white"}},"header":{"fill":{"color":"#C8D4E3"},"line":{"color":"white"}},"type":"table"}],"barpolar":[{"marker":{"line":{"color":"#E5ECF6","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"barpolar"}],"pie":[{"automargin":true,"type":"pie"}]},"layout":{"autotypenumbers":"strict","colorway":["#636efa","#EF553B","#00cc96","#ab63fa","#FFA15A","#19d3f3","#FF6692","#B6E880","#FF97FF","#FECB52"],"font":{"color":"#2a3f5f"},"hovermode":"closest","hoverlabel":{"align":"left"},"paper_bgcolor":"white","plot_bgcolor":"#E5ECF6","polar":{"bgcolor":"#E5ECF6","angularaxis":{"gridcolor":"white","linecolor":"white","ticks":""},"radialaxis":{"gridcolor":"white","linecolor":"white","ticks":""}},"ternary":{"bgcolor":"#E5ECF6","aaxis":{"gridcolor":"white","linecolor":"white","ticks":""},"baxis":{"gridcolor":"white","linecolor":"white","ticks":""},"caxis":{"gridcolor":"white","linecolor":"white","ticks":""}},"coloraxis":{"colorbar":{"outlinewidth":0,"ticks":""}},"colorscale":{"sequential":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"sequentialminus":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"diverging":[[0,"#8e0152"],[0.1,"#c51b7d"],[0.2,"#de77ae"],[0.3,"#f1b6da"],[0.4,"#fde0ef"],[0.5,"#f7f7f7"],[0.6,"#e6f5d0"],[0.7,"#b8e186"],[0.8,"#7fbc41"],[0.9,"#4d9221"],[1,"#276419"]]},"xaxis":{"gridcolor":"white","linecolor":"white","ticks":"","title":{"standoff":15},"zerolinecolor":"white","automargin":true,"zerolinewidth":2},"yaxis":{"gridcolor":"white","linecolor":"white","ticks":"","title":{"standoff":15},"zerolinecolor":"white","automargin":true,"zerolinewidth":2},"scene":{"xaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2},"yaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2},"zaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2}},"shapedefaults":{"line":{"color":"#2a3f5f"}},"annotationdefaults":{"arrowcolor":"#2a3f5f","arrowhead":0,"arrowwidth":1},"geo":{"bgcolor":"white","landcolor":"#E5ECF6","subunitcolor":"white","showland":true,"showlakes":true,"lakecolor":"white"},"title":{"x":0.05},"mapbox":{"style":"light"}}},"shapes":[{"line":{"color":"#FFD740","dash":"dash","width":1.5},"type":"line","x0":0,"x1":0,"xref":"x","y0":0,"y1":1,"yref":"y domain"},{"line":{"color":"#00E676","dash":"dot","width":1.5},"type":"line","x0":72.88819677454167,"x1":72.88819677454167,"xref":"x","y0":0,"y1":1,"yref":"y domain"}],"annotations":[{"showarrow":false,"text":"Mean: $73","x":72.88819677454167,"xanchor":"left","xref":"x","y":1,"yanchor":"top","yref":"y domain"}],"title":{"font":{"size":18,"color":"#f0f6fc"},"text":"P&L Distribution"},"font":{"family":"Inter, system-ui, sans-serif","color":"#c9d1d9","size":12},"margin":{"l":50,"r":30,"t":50,"b":40},"xaxis":{"title":{"text":"Net P&L ($)"},"gridcolor":"#21262d","zerolinecolor":"#21262d"},"yaxis":{"title":{"text":"Frequency"},"gridcolor":"#21262d","zerolinecolor":"#21262d"},"height":350,"paper_bgcolor":"rgba(0,0,0,0)","plot_bgcolor":"#0d1117"},                        {"responsive": true}                    )                };            </script>        </div>
+            </div>
+        </div>
+        
+        <!-- Monthly P&L -->
+        <h2 class="section-title">Month-on-Month Analysis</h2>
+        <div class="chart-container">
+            <div style="height:400px; width:100%;">                            <div id="monthly-chart" class="plotly-graph-div" style="height:100%; width:100%;"></div>            <script>                window.PLOTLYENV=window.PLOTLYENV || {};                                if (document.getElementById("monthly-chart")) {                    Plotly.newPlot(                        "monthly-chart",                        [{"customdata":[[2,100.0],[4,75.0],[5,40.0],[5,80.0],[5,20.0],[4,75.0],[4,75.0],[5,40.0],[5,60.0],[5,100.0],[6,33.33333333333333],[6,66.66666666666666],[2,50.0]],"hovertemplate":"\u003cb\u003e%{x}\u003c\u002fb\u003e\u003cbr\u003eNet P&L: $%{y:,.2f}\u003cbr\u003eTrades: %{customdata[0]}\u003cbr\u003eWin Rate: %{customdata[1]:.1f}%\u003cextra\u003e\u003c\u002fextra\u003e","marker":{"color":["#00E676","#00E676","#FF5252","#00E676","#FF5252","#00E676","#00E676","#FF5252","#00E676","#00E676","#FF5252","#00E676","#00E676"]},"name":"Monthly P&L","text":["$993","$1,812","$-561","$139","$-387","$264","$226","$-449","$262","$2,006","$-1,068","$776","$213"],"textfont":{"size":11},"textposition":"outside","x":["2025-08","2025-09","2025-10","2025-11","2025-12","2026-01","2026-02","2026-03","2026-04","2026-05","2026-06","2026-07","2026-08"],"y":{"dtype":"f8","bdata":"JxutrVgJj0CvZAk3j1CcQNW4Wy\u002fLiYHA1010\u002fAlpYUDEtWlqNDF4wIYVit\u002f3hnBApqGOhg9PbECZLX7dEgp8wC9OP5UMZ3BAqoZn+UxYn0D+Ab3tabGQwHH3YJhpQYhARJ4P9nuTakA="},"type":"bar"}],                        {"template":{"data":{"histogram2dcontour":[{"type":"histogram2dcontour","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"choropleth":[{"type":"choropleth","colorbar":{"outlinewidth":0,"ticks":""}}],"histogram2d":[{"type":"histogram2d","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"heatmap":[{"type":"heatmap","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"contourcarpet":[{"type":"contourcarpet","colorbar":{"outlinewidth":0,"ticks":""}}],"contour":[{"type":"contour","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"surface":[{"type":"surface","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"mesh3d":[{"type":"mesh3d","colorbar":{"outlinewidth":0,"ticks":""}}],"scatter":[{"fillpattern":{"fillmode":"overlay","size":10,"solidity":0.2},"type":"scatter"}],"parcoords":[{"type":"parcoords","line":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterpolargl":[{"type":"scatterpolargl","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"bar":[{"error_x":{"color":"#2a3f5f"},"error_y":{"color":"#2a3f5f"},"marker":{"line":{"color":"#E5ECF6","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"bar"}],"scattergeo":[{"type":"scattergeo","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterpolar":[{"type":"scatterpolar","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"histogram":[{"marker":{"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"histogram"}],"scattergl":[{"type":"scattergl","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatter3d":[{"type":"scatter3d","line":{"colorbar":{"outlinewidth":0,"ticks":""}},"marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattermap":[{"type":"scattermap","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattermapbox":[{"type":"scattermapbox","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterternary":[{"type":"scatterternary","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattercarpet":[{"type":"scattercarpet","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"carpet":[{"aaxis":{"endlinecolor":"#2a3f5f","gridcolor":"white","linecolor":"white","minorgridcolor":"white","startlinecolor":"#2a3f5f"},"baxis":{"endlinecolor":"#2a3f5f","gridcolor":"white","linecolor":"white","minorgridcolor":"white","startlinecolor":"#2a3f5f"},"type":"carpet"}],"table":[{"cells":{"fill":{"color":"#EBF0F8"},"line":{"color":"white"}},"header":{"fill":{"color":"#C8D4E3"},"line":{"color":"white"}},"type":"table"}],"barpolar":[{"marker":{"line":{"color":"#E5ECF6","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"barpolar"}],"pie":[{"automargin":true,"type":"pie"}]},"layout":{"autotypenumbers":"strict","colorway":["#636efa","#EF553B","#00cc96","#ab63fa","#FFA15A","#19d3f3","#FF6692","#B6E880","#FF97FF","#FECB52"],"font":{"color":"#2a3f5f"},"hovermode":"closest","hoverlabel":{"align":"left"},"paper_bgcolor":"white","plot_bgcolor":"#E5ECF6","polar":{"bgcolor":"#E5ECF6","angularaxis":{"gridcolor":"white","linecolor":"white","ticks":""},"radialaxis":{"gridcolor":"white","linecolor":"white","ticks":""}},"ternary":{"bgcolor":"#E5ECF6","aaxis":{"gridcolor":"white","linecolor":"white","ticks":""},"baxis":{"gridcolor":"white","linecolor":"white","ticks":""},"caxis":{"gridcolor":"white","linecolor":"white","ticks":""}},"coloraxis":{"colorbar":{"outlinewidth":0,"ticks":""}},"colorscale":{"sequential":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"sequentialminus":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"diverging":[[0,"#8e0152"],[0.1,"#c51b7d"],[0.2,"#de77ae"],[0.3,"#f1b6da"],[0.4,"#fde0ef"],[0.5,"#f7f7f7"],[0.6,"#e6f5d0"],[0.7,"#b8e186"],[0.8,"#7fbc41"],[0.9,"#4d9221"],[1,"#276419"]]},"xaxis":{"gridcolor":"white","linecolor":"white","ticks":"","title":{"standoff":15},"zerolinecolor":"white","automargin":true,"zerolinewidth":2},"yaxis":{"gridcolor":"white","linecolor":"white","ticks":"","title":{"standoff":15},"zerolinecolor":"white","automargin":true,"zerolinewidth":2},"scene":{"xaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2},"yaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2},"zaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2}},"shapedefaults":{"line":{"color":"#2a3f5f"}},"annotationdefaults":{"arrowcolor":"#2a3f5f","arrowhead":0,"arrowwidth":1},"geo":{"bgcolor":"white","landcolor":"#E5ECF6","subunitcolor":"white","showland":true,"showlakes":true,"lakecolor":"white"},"title":{"x":0.05},"mapbox":{"style":"light"}}},"title":{"font":{"size":18,"color":"#f0f6fc"},"text":"Month-on-Month P&L"},"font":{"family":"Inter, system-ui, sans-serif","color":"#c9d1d9","size":12},"margin":{"l":50,"r":30,"t":50,"b":40},"xaxis":{"title":{"text":"Month"},"gridcolor":"#21262d","zerolinecolor":"#21262d"},"yaxis":{"title":{"text":"Net P&L ($)"},"gridcolor":"#21262d","zerolinecolor":"#21262d"},"height":400,"paper_bgcolor":"rgba(0,0,0,0)","plot_bgcolor":"#0d1117"},                        {"responsive": true}                    )                };            </script>        </div>
+        </div>
+        
+        <div class="charts-row">
+            <div class="chart-container">
+                <div style="height:350px; width:100%;">                            <div id="monthly-cum-chart" class="plotly-graph-div" style="height:100%; width:100%;"></div>            <script>                window.PLOTLYENV=window.PLOTLYENV || {};                                if (document.getElementById("monthly-cum-chart")) {                    Plotly.newPlot(                        "monthly-cum-chart",                        [{"hovertemplate":"\u003cb\u003e%{x}\u003c\u002fb\u003e\u003cbr\u003eCumulative P&L: $%{y:,.2f}\u003cextra\u003e\u003c\u002fextra\u003e","line":{"color":"#B388FF","width":2.5},"marker":{"color":"#B388FF","line":{"color":"#0d1117","width":1.5},"size":8},"mode":"lines+markers","name":"Cumulative Monthly P&L","x":["2025-08","2025-09","2025-10","2025-11","2025-12","2026-01","2026-02","2026-03","2026-04","2026-05","2026-06","2026-07","2026-08"],"y":{"dtype":"f8","bdata":"JxutrVgJj0Ah+e\u002fGneqlQOwKGfsqiKFAyU\u002fgmrueokAhMiYbKjGfQMFbhAl0qaFA20XtAWVuo0BQAHtMRdqfQO5p5TgE+qFAopbMWhXTsEBFrLq+dU2pQCHq0iTQXa9AA\u002fIZ8oODsEA="},"type":"scatter"}],                        {"template":{"data":{"histogram2dcontour":[{"type":"histogram2dcontour","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"choropleth":[{"type":"choropleth","colorbar":{"outlinewidth":0,"ticks":""}}],"histogram2d":[{"type":"histogram2d","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"heatmap":[{"type":"heatmap","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"contourcarpet":[{"type":"contourcarpet","colorbar":{"outlinewidth":0,"ticks":""}}],"contour":[{"type":"contour","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"surface":[{"type":"surface","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"mesh3d":[{"type":"mesh3d","colorbar":{"outlinewidth":0,"ticks":""}}],"scatter":[{"fillpattern":{"fillmode":"overlay","size":10,"solidity":0.2},"type":"scatter"}],"parcoords":[{"type":"parcoords","line":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterpolargl":[{"type":"scatterpolargl","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"bar":[{"error_x":{"color":"#2a3f5f"},"error_y":{"color":"#2a3f5f"},"marker":{"line":{"color":"#E5ECF6","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"bar"}],"scattergeo":[{"type":"scattergeo","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterpolar":[{"type":"scatterpolar","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"histogram":[{"marker":{"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"histogram"}],"scattergl":[{"type":"scattergl","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatter3d":[{"type":"scatter3d","line":{"colorbar":{"outlinewidth":0,"ticks":""}},"marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattermap":[{"type":"scattermap","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattermapbox":[{"type":"scattermapbox","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterternary":[{"type":"scatterternary","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattercarpet":[{"type":"scattercarpet","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"carpet":[{"aaxis":{"endlinecolor":"#2a3f5f","gridcolor":"white","linecolor":"white","minorgridcolor":"white","startlinecolor":"#2a3f5f"},"baxis":{"endlinecolor":"#2a3f5f","gridcolor":"white","linecolor":"white","minorgridcolor":"white","startlinecolor":"#2a3f5f"},"type":"carpet"}],"table":[{"cells":{"fill":{"color":"#EBF0F8"},"line":{"color":"white"}},"header":{"fill":{"color":"#C8D4E3"},"line":{"color":"white"}},"type":"table"}],"barpolar":[{"marker":{"line":{"color":"#E5ECF6","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"barpolar"}],"pie":[{"automargin":true,"type":"pie"}]},"layout":{"autotypenumbers":"strict","colorway":["#636efa","#EF553B","#00cc96","#ab63fa","#FFA15A","#19d3f3","#FF6692","#B6E880","#FF97FF","#FECB52"],"font":{"color":"#2a3f5f"},"hovermode":"closest","hoverlabel":{"align":"left"},"paper_bgcolor":"white","plot_bgcolor":"#E5ECF6","polar":{"bgcolor":"#E5ECF6","angularaxis":{"gridcolor":"white","linecolor":"white","ticks":""},"radialaxis":{"gridcolor":"white","linecolor":"white","ticks":""}},"ternary":{"bgcolor":"#E5ECF6","aaxis":{"gridcolor":"white","linecolor":"white","ticks":""},"baxis":{"gridcolor":"white","linecolor":"white","ticks":""},"caxis":{"gridcolor":"white","linecolor":"white","ticks":""}},"coloraxis":{"colorbar":{"outlinewidth":0,"ticks":""}},"colorscale":{"sequential":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"sequentialminus":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"diverging":[[0,"#8e0152"],[0.1,"#c51b7d"],[0.2,"#de77ae"],[0.3,"#f1b6da"],[0.4,"#fde0ef"],[0.5,"#f7f7f7"],[0.6,"#e6f5d0"],[0.7,"#b8e186"],[0.8,"#7fbc41"],[0.9,"#4d9221"],[1,"#276419"]]},"xaxis":{"gridcolor":"white","linecolor":"white","ticks":"","title":{"standoff":15},"zerolinecolor":"white","automargin":true,"zerolinewidth":2},"yaxis":{"gridcolor":"white","linecolor":"white","ticks":"","title":{"standoff":15},"zerolinecolor":"white","automargin":true,"zerolinewidth":2},"scene":{"xaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2},"yaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2},"zaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2}},"shapedefaults":{"line":{"color":"#2a3f5f"}},"annotationdefaults":{"arrowcolor":"#2a3f5f","arrowhead":0,"arrowwidth":1},"geo":{"bgcolor":"white","landcolor":"#E5ECF6","subunitcolor":"white","showland":true,"showlakes":true,"lakecolor":"white"},"title":{"x":0.05},"mapbox":{"style":"light"}}},"title":{"font":{"size":18,"color":"#f0f6fc"},"text":"Monthly Cumulative P&L"},"font":{"family":"Inter, system-ui, sans-serif","color":"#c9d1d9","size":12},"margin":{"l":50,"r":30,"t":50,"b":40},"xaxis":{"title":{"text":"Month"},"gridcolor":"#21262d","zerolinecolor":"#21262d"},"yaxis":{"title":{"text":"Cumulative P&L ($)"},"gridcolor":"#21262d","zerolinecolor":"#21262d"},"height":350,"paper_bgcolor":"rgba(0,0,0,0)","plot_bgcolor":"#0d1117"},                        {"responsive": true}                    )                };            </script>        </div>
+            </div>
+            <div class="chart-container">
+                <div style="height:350px; width:100%;">                            <div id="pie-chart" class="plotly-graph-div" style="height:100%; width:100%;"></div>            <script>                window.PLOTLYENV=window.PLOTLYENV || {};                                if (document.getElementById("pie-chart")) {                    Plotly.newPlot(                        "pie-chart",                        [{"hole":0.45,"hovertemplate":"\u003cb\u003e%{label}\u003c\u002fb\u003e\u003cbr\u003eCount: %{value}\u003cbr\u003ePercentage: %{percent}\u003cextra\u003e\u003c\u002fextra\u003e","labels":["Expiry","Call SL Hit","Both SL Hit"],"marker":{"colors":["#00BCD4","#FF5252","#B388FF"],"line":{"color":"#0d1117","width":2}},"textfont":{"size":13},"textinfo":"label+percent","values":{"dtype":"i1","bdata":"MgYC"},"type":"pie"}],                        {"template":{"data":{"histogram2dcontour":[{"type":"histogram2dcontour","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"choropleth":[{"type":"choropleth","colorbar":{"outlinewidth":0,"ticks":""}}],"histogram2d":[{"type":"histogram2d","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"heatmap":[{"type":"heatmap","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"contourcarpet":[{"type":"contourcarpet","colorbar":{"outlinewidth":0,"ticks":""}}],"contour":[{"type":"contour","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"surface":[{"type":"surface","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"mesh3d":[{"type":"mesh3d","colorbar":{"outlinewidth":0,"ticks":""}}],"scatter":[{"fillpattern":{"fillmode":"overlay","size":10,"solidity":0.2},"type":"scatter"}],"parcoords":[{"type":"parcoords","line":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterpolargl":[{"type":"scatterpolargl","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"bar":[{"error_x":{"color":"#2a3f5f"},"error_y":{"color":"#2a3f5f"},"marker":{"line":{"color":"#E5ECF6","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"bar"}],"scattergeo":[{"type":"scattergeo","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterpolar":[{"type":"scatterpolar","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"histogram":[{"marker":{"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"histogram"}],"scattergl":[{"type":"scattergl","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatter3d":[{"type":"scatter3d","line":{"colorbar":{"outlinewidth":0,"ticks":""}},"marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattermap":[{"type":"scattermap","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattermapbox":[{"type":"scattermapbox","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterternary":[{"type":"scatterternary","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattercarpet":[{"type":"scattercarpet","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"carpet":[{"aaxis":{"endlinecolor":"#2a3f5f","gridcolor":"white","linecolor":"white","minorgridcolor":"white","startlinecolor":"#2a3f5f"},"baxis":{"endlinecolor":"#2a3f5f","gridcolor":"white","linecolor":"white","minorgridcolor":"white","startlinecolor":"#2a3f5f"},"type":"carpet"}],"table":[{"cells":{"fill":{"color":"#EBF0F8"},"line":{"color":"white"}},"header":{"fill":{"color":"#C8D4E3"},"line":{"color":"white"}},"type":"table"}],"barpolar":[{"marker":{"line":{"color":"#E5ECF6","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"barpolar"}],"pie":[{"automargin":true,"type":"pie"}]},"layout":{"autotypenumbers":"strict","colorway":["#636efa","#EF553B","#00cc96","#ab63fa","#FFA15A","#19d3f3","#FF6692","#B6E880","#FF97FF","#FECB52"],"font":{"color":"#2a3f5f"},"hovermode":"closest","hoverlabel":{"align":"left"},"paper_bgcolor":"white","plot_bgcolor":"#E5ECF6","polar":{"bgcolor":"#E5ECF6","angularaxis":{"gridcolor":"white","linecolor":"white","ticks":""},"radialaxis":{"gridcolor":"white","linecolor":"white","ticks":""}},"ternary":{"bgcolor":"#E5ECF6","aaxis":{"gridcolor":"white","linecolor":"white","ticks":""},"baxis":{"gridcolor":"white","linecolor":"white","ticks":""},"caxis":{"gridcolor":"white","linecolor":"white","ticks":""}},"coloraxis":{"colorbar":{"outlinewidth":0,"ticks":""}},"colorscale":{"sequential":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"sequentialminus":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"diverging":[[0,"#8e0152"],[0.1,"#c51b7d"],[0.2,"#de77ae"],[0.3,"#f1b6da"],[0.4,"#fde0ef"],[0.5,"#f7f7f7"],[0.6,"#e6f5d0"],[0.7,"#b8e186"],[0.8,"#7fbc41"],[0.9,"#4d9221"],[1,"#276419"]]},"xaxis":{"gridcolor":"white","linecolor":"white","ticks":"","title":{"standoff":15},"zerolinecolor":"white","automargin":true,"zerolinewidth":2},"yaxis":{"gridcolor":"white","linecolor":"white","ticks":"","title":{"standoff":15},"zerolinecolor":"white","automargin":true,"zerolinewidth":2},"scene":{"xaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2},"yaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2},"zaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2}},"shapedefaults":{"line":{"color":"#2a3f5f"}},"annotationdefaults":{"arrowcolor":"#2a3f5f","arrowhead":0,"arrowwidth":1},"geo":{"bgcolor":"white","landcolor":"#E5ECF6","subunitcolor":"white","showland":true,"showlakes":true,"lakecolor":"white"},"title":{"x":0.05},"mapbox":{"style":"light"}}},"title":{"font":{"size":18,"color":"#f0f6fc"},"text":"Exit Reason Breakdown"},"font":{"family":"Inter, system-ui, sans-serif","color":"#c9d1d9","size":12},"margin":{"l":30,"r":30,"t":50,"b":30},"legend":{"font":{"size":12}},"height":350,"paper_bgcolor":"rgba(0,0,0,0)","plot_bgcolor":"rgba(0,0,0,0)","showlegend":true},                        {"responsive": true}                    )                };            </script>        </div>
+            </div>
+        </div>
+        
+        <!-- Monthly Detail Table -->
+        <div class="table-container">
+            <div class="table-scroll">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Month</th>
+                            <th>Trades</th>
+                            <th>Win Rate</th>
+                            <th>Net P&L</th>
+                            <th>Avg P&L</th>
+                            <th>Best Trade</th>
+                            <th>Worst Trade</th>
+                            <th>Premium Collected</th>
+                            <th>Slippage Paid</th>
+                            <th>Cumulative P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        
+        <tr>
+            <td><strong>2025-08</strong></td>
+            <td>2</td>
+            <td>100.0%</td>
+            <td class="positive">$993.17</td>
+            <td>$496.58</td>
+            <td class="positive">$794.23</td>
+            <td class="negative">$198.94</td>
+            <td>$2,073.51</td>
+            <td>$213.82</td>
+            <td class="positive">$993.17</td>
+        </tr>
+        <tr>
+            <td><strong>2025-09</strong></td>
+            <td>4</td>
+            <td>75.0%</td>
+            <td class="positive">$1,812.14</td>
+            <td>$453.03</td>
+            <td class="positive">$848.69</td>
+            <td class="negative">$-79.12</td>
+            <td>$4,185.71</td>
+            <td>$445.36</td>
+            <td class="positive">$2,805.31</td>
+        </tr>
+        <tr>
+            <td><strong>2025-10</strong></td>
+            <td>5</td>
+            <td>40.0%</td>
+            <td class="negative">$-561.22</td>
+            <td>$-112.24</td>
+            <td class="positive">$213.54</td>
+            <td class="negative">$-673.02</td>
+            <td>$5,314.14</td>
+            <td>$778.47</td>
+            <td class="positive">$2,244.08</td>
+        </tr>
+        <tr>
+            <td><strong>2025-11</strong></td>
+            <td>5</td>
+            <td>80.0%</td>
+            <td class="positive">$139.28</td>
+            <td>$27.86</td>
+            <td class="positive">$197.86</td>
+            <td class="negative">$-558.00</td>
+            <td>$4,518.51</td>
+            <td>$616.52</td>
+            <td class="positive">$2,383.37</td>
+        </tr>
+        <tr>
+            <td><strong>2025-12</strong></td>
+            <td>5</td>
+            <td>20.0%</td>
+            <td class="negative">$-387.08</td>
+            <td>$-77.42</td>
+            <td class="positive">$148.83</td>
+            <td class="negative">$-273.09</td>
+            <td>$4,056.75</td>
+            <td>$590.37</td>
+            <td class="positive">$1,996.29</td>
+        </tr>
+        <tr>
+            <td><strong>2026-01</strong></td>
+            <td>4</td>
+            <td>75.0%</td>
+            <td class="positive">$264.44</td>
+            <td>$66.11</td>
+            <td class="positive">$179.87</td>
+            <td class="negative">$-136.45</td>
+            <td>$3,401.61</td>
+            <td>$452.34</td>
+            <td class="positive">$2,260.73</td>
+        </tr>
+        <tr>
+            <td><strong>2026-02</strong></td>
+            <td>4</td>
+            <td>75.0%</td>
+            <td class="positive">$226.47</td>
+            <td>$56.62</td>
+            <td class="positive">$101.74</td>
+            <td class="negative">$-49.35</td>
+            <td>$2,582.11</td>
+            <td>$341.29</td>
+            <td class="positive">$2,487.20</td>
+        </tr>
+        <tr>
+            <td><strong>2026-03</strong></td>
+            <td>5</td>
+            <td>40.0%</td>
+            <td class="negative">$-448.63</td>
+            <td>$-89.73</td>
+            <td class="positive">$133.59</td>
+            <td class="negative">$-581.14</td>
+            <td>$3,290.63</td>
+            <td>$489.24</td>
+            <td class="positive">$2,038.57</td>
+        </tr>
+        <tr>
+            <td><strong>2026-04</strong></td>
+            <td>5</td>
+            <td>60.0%</td>
+            <td class="positive">$262.44</td>
+            <td>$52.49</td>
+            <td class="positive">$570.84</td>
+            <td class="negative">$-478.11</td>
+            <td>$3,428.32</td>
+            <td>$455.38</td>
+            <td class="positive">$2,301.01</td>
+        </tr>
+        <tr>
+            <td><strong>2026-05</strong></td>
+            <td>5</td>
+            <td>100.0%</td>
+            <td class="positive">$2,006.08</td>
+            <td>$401.22</td>
+            <td class="positive">$591.99</td>
+            <td class="negative">$133.74</td>
+            <td>$3,584.00</td>
+            <td>$348.46</td>
+            <td class="positive">$4,307.08</td>
+        </tr>
+        <tr>
+            <td><strong>2026-06</strong></td>
+            <td>6</td>
+            <td>33.3%</td>
+            <td class="negative">$-1,068.35</td>
+            <td>$-178.06</td>
+            <td class="positive">$118.09</td>
+            <td class="negative">$-433.28</td>
+            <td>$3,495.18</td>
+            <td>$563.61</td>
+            <td class="positive">$3,238.73</td>
+        </tr>
+        <tr>
+            <td><strong>2026-07</strong></td>
+            <td>6</td>
+            <td>66.7%</td>
+            <td class="positive">$776.18</td>
+            <td>$129.36</td>
+            <td class="positive">$480.25</td>
+            <td class="negative">$-383.76</td>
+            <td>$3,526.49</td>
+            <td>$431.14</td>
+            <td class="positive">$4,014.91</td>
+        </tr>
+        <tr>
+            <td><strong>2026-08</strong></td>
+            <td>2</td>
+            <td>50.0%</td>
+            <td class="positive">$212.61</td>
+            <td>$106.30</td>
+            <td class="positive">$470.20</td>
+            <td class="negative">$-257.59</td>
+            <td>$1,191.87</td>
+            <td>$149.18</td>
+            <td class="positive">$4,227.52</td>
+        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- Per-Trade Breakdown -->
+        <h2 class="section-title">Trade-by-Trade Breakdown</h2>
+        
+        <div class="chart-container">
+            <div style="height:350px; width:100%;">                            <div id="waterfall-chart" class="plotly-graph-div" style="height:100%; width:100%;"></div>            <script>                window.PLOTLYENV=window.PLOTLYENV || {};                                if (document.getElementById("waterfall-chart")) {                    Plotly.newPlot(                        "waterfall-chart",                        [{"customdata":[["2025-08-23 08:00","2025-08-30 08:00","Expiry"],["2025-08-30 09:00","2025-09-06 09:00","Expiry"],["2025-09-06 10:00","2025-09-13 10:00","Expiry"],["2025-09-13 11:00","2025-09-20 11:00","Expiry"],["2025-09-20 12:00","2025-09-27 12:00","Expiry"],["2025-09-27 13:00","2025-10-04 13:00","Expiry"],["2025-10-04 14:00","2025-10-11 14:00","Expiry"],["2025-10-11 15:00","2025-10-12 19:00","Call SL Hit"],["2025-10-12 20:00","2025-10-19 20:00","Expiry"],["2025-10-19 21:00","2025-10-26 21:00","Expiry"],["2025-10-26 22:00","2025-11-02 22:00","Expiry"],["2025-11-02 23:00","2025-11-09 23:00","Expiry"],["2025-11-10 00:00","2025-11-17 00:00","Expiry"],["2025-11-17 01:00","2025-11-24 01:00","Expiry"],["2025-11-24 02:00","2025-11-24 20:00","Call SL Hit"],["2025-11-24 21:00","2025-12-01 21:00","Expiry"],["2025-12-01 22:00","2025-12-08 22:00","Expiry"],["2025-12-08 23:00","2025-12-15 23:00","Expiry"],["2025-12-16 00:00","2025-12-23 00:00","Expiry"],["2025-12-23 01:00","2025-12-30 01:00","Expiry"],["2025-12-30 02:00","2026-01-06 02:00","Expiry"],["2026-01-06 03:00","2026-01-13 03:00","Expiry"],["2026-01-13 04:00","2026-01-20 04:00","Expiry"],["2026-01-20 05:00","2026-01-27 05:00","Expiry"],["2026-01-27 06:00","2026-02-03 06:00","Expiry"],["2026-02-03 07:00","2026-02-10 07:00","Expiry"],["2026-02-10 08:00","2026-02-17 08:00","Expiry"],["2026-02-17 09:00","2026-02-24 09:00","Expiry"],["2026-02-24 10:00","2026-03-03 10:00","Expiry"],["2026-03-03 11:00","2026-03-10 11:00","Expiry"],["2026-03-10 12:00","2026-03-17 12:00","Expiry"],["2026-03-17 13:00","2026-03-18 14:00","Both SL Hit"],["2026-03-18 15:00","2026-03-25 15:00","Expiry"],["2026-03-25 16:00","2026-04-01 16:00","Expiry"],["2026-04-01 17:00","2026-04-08 17:00","Expiry"],["2026-04-08 18:00","2026-04-15 18:00","Expiry"],["2026-04-15 19:00","2026-04-17 13:00","Call SL Hit"],["2026-04-17 14:00","2026-04-24 14:00","Expiry"],["2026-04-24 15:00","2026-05-01 15:00","Expiry"],["2026-05-01 16:00","2026-05-08 16:00","Expiry"],["2026-05-08 17:00","2026-05-15 17:00","Expiry"],["2026-05-15 18:00","2026-05-22 18:00","Expiry"],["2026-05-22 19:00","2026-05-29 19:00","Expiry"],["2026-05-29 20:00","2026-06-05 20:00","Expiry"],["2026-06-05 21:00","2026-06-08 00:00","Call SL Hit"],["2026-06-08 01:00","2026-06-15 01:00","Expiry"],["2026-06-15 02:00","2026-06-22 02:00","Expiry"],["2026-06-22 03:00","2026-06-23 08:00","Both SL Hit"],["2026-06-23 09:00","2026-06-30 09:00","Expiry"],["2026-06-30 10:00","2026-07-01 21:00","Call SL Hit"],["2026-07-01 22:00","2026-07-02 12:00","Call SL Hit"],["2026-07-02 13:00","2026-07-09 13:00","Expiry"],["2026-07-09 14:00","2026-07-16 14:00","Expiry"],["2026-07-16 15:00","2026-07-23 15:00","Expiry"],["2026-07-23 16:00","2026-07-30 16:00","Expiry"],["2026-07-30 17:00","2026-08-06 17:00","Expiry"],["2026-08-06 18:00","2026-08-13 18:00","Expiry"],["2026-08-13 19:00","2026-08-20 19:00","Expiry"]],"hovertemplate":"\u003cb\u003eTrade #%{x}\u003c\u002fb\u003e\u003cbr\u003eP&L: $%{y:,.2f}\u003cbr\u003eEntry: %{customdata[0]}\u003cbr\u003eExit: %{customdata[1]}\u003cbr\u003eReason: %{customdata[2]}\u003cextra\u003e\u003c\u002fextra\u003e","marker":{"color":["#00E676","#00E676","#00E676","#00E676","#00E676","#FF5252","#FF5252","#FF5252","#00E676","#FF5252","#00E676","#00E676","#00E676","#00E676","#FF5252","#00E676","#FF5252","#FF5252","#FF5252","#00E676","#FF5252","#00E676","#FF5252","#00E676","#00E676","#00E676","#00E676","#00E676","#FF5252","#FF5252","#FF5252","#FF5252","#00E676","#00E676","#00E676","#FF5252","#FF5252","#00E676","#00E676","#00E676","#00E676","#00E676","#00E676","#00E676","#FF5252","#00E676","#FF5252","#FF5252","#00E676","#FF5252","#FF5252","#00E676","#FF5252","#00E676","#00E676","#00E676","#00E676","#FF5252"]},"name":"Trade P&L","x":{"dtype":"i1","bdata":"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Og=="},"y":{"dtype":"f8","bdata":"dA99qw\u002feaEBK183C1NGIQMpJ5C4FcYlA45yayYyFikCsFBWQE45sQMwTi3PDx1PA7P40OtaYUsCNIY63KgiFwIalPnNhsWpAjEdUcmObU8Bmgj4P5ohJQM+GD2WipmhACVEPc3C7aEAX2nXz9rdgQBz5x+H1b4HAV4D\u002ft9cOZUAApt52ZRFxwF87PlwrylzAclfCK8EpSMCDBl1On5piQP3kxnhu1VjAghlEOTihVkDsYQNLSg5hwO7uAjbLe2ZASZFyt9JPYEBMNzksSQVXQFq9GzN2b1lAUAMEwLB\u002fVEBSaXckoqxIwPcgqr1QalLAkmhRFYmcR8DAYfSNFymCwJ9k7jXYsmBAn2Mg1lXzXUA+Oswt+DpRQL2LV50CuDfAFIBDKMThfcAr\u002fuUamSBfQHLclUq21oFAs\u002fScg028gUDRFlJa9X+CQOqRXdWjEIJASkARv9K3YEBRf\u002fg++tZgQDoACbEH6HfAII8T35neUEBmoaGzbHdNwIugVB6CFHvAtoJz3+qFXUB998OAUbN3wOwq8+8y\u002fHfAa4qT8MfDfECIBZm0HTwxwJHf3dZ1y11AyLYE1\u002fIDfkA+xLv6vmBdQAWOhZUvY31A4759mnEZcMA="},"type":"bar"}],                        {"template":{"data":{"histogram2dcontour":[{"type":"histogram2dcontour","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"choropleth":[{"type":"choropleth","colorbar":{"outlinewidth":0,"ticks":""}}],"histogram2d":[{"type":"histogram2d","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"heatmap":[{"type":"heatmap","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"contourcarpet":[{"type":"contourcarpet","colorbar":{"outlinewidth":0,"ticks":""}}],"contour":[{"type":"contour","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"surface":[{"type":"surface","colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]}],"mesh3d":[{"type":"mesh3d","colorbar":{"outlinewidth":0,"ticks":""}}],"scatter":[{"fillpattern":{"fillmode":"overlay","size":10,"solidity":0.2},"type":"scatter"}],"parcoords":[{"type":"parcoords","line":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterpolargl":[{"type":"scatterpolargl","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"bar":[{"error_x":{"color":"#2a3f5f"},"error_y":{"color":"#2a3f5f"},"marker":{"line":{"color":"#E5ECF6","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"bar"}],"scattergeo":[{"type":"scattergeo","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterpolar":[{"type":"scatterpolar","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"histogram":[{"marker":{"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"histogram"}],"scattergl":[{"type":"scattergl","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatter3d":[{"type":"scatter3d","line":{"colorbar":{"outlinewidth":0,"ticks":""}},"marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattermap":[{"type":"scattermap","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattermapbox":[{"type":"scattermapbox","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scatterternary":[{"type":"scatterternary","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"scattercarpet":[{"type":"scattercarpet","marker":{"colorbar":{"outlinewidth":0,"ticks":""}}}],"carpet":[{"aaxis":{"endlinecolor":"#2a3f5f","gridcolor":"white","linecolor":"white","minorgridcolor":"white","startlinecolor":"#2a3f5f"},"baxis":{"endlinecolor":"#2a3f5f","gridcolor":"white","linecolor":"white","minorgridcolor":"white","startlinecolor":"#2a3f5f"},"type":"carpet"}],"table":[{"cells":{"fill":{"color":"#EBF0F8"},"line":{"color":"white"}},"header":{"fill":{"color":"#C8D4E3"},"line":{"color":"white"}},"type":"table"}],"barpolar":[{"marker":{"line":{"color":"#E5ECF6","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"barpolar"}],"pie":[{"automargin":true,"type":"pie"}]},"layout":{"autotypenumbers":"strict","colorway":["#636efa","#EF553B","#00cc96","#ab63fa","#FFA15A","#19d3f3","#FF6692","#B6E880","#FF97FF","#FECB52"],"font":{"color":"#2a3f5f"},"hovermode":"closest","hoverlabel":{"align":"left"},"paper_bgcolor":"white","plot_bgcolor":"#E5ECF6","polar":{"bgcolor":"#E5ECF6","angularaxis":{"gridcolor":"white","linecolor":"white","ticks":""},"radialaxis":{"gridcolor":"white","linecolor":"white","ticks":""}},"ternary":{"bgcolor":"#E5ECF6","aaxis":{"gridcolor":"white","linecolor":"white","ticks":""},"baxis":{"gridcolor":"white","linecolor":"white","ticks":""},"caxis":{"gridcolor":"white","linecolor":"white","ticks":""}},"coloraxis":{"colorbar":{"outlinewidth":0,"ticks":""}},"colorscale":{"sequential":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"sequentialminus":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"diverging":[[0,"#8e0152"],[0.1,"#c51b7d"],[0.2,"#de77ae"],[0.3,"#f1b6da"],[0.4,"#fde0ef"],[0.5,"#f7f7f7"],[0.6,"#e6f5d0"],[0.7,"#b8e186"],[0.8,"#7fbc41"],[0.9,"#4d9221"],[1,"#276419"]]},"xaxis":{"gridcolor":"white","linecolor":"white","ticks":"","title":{"standoff":15},"zerolinecolor":"white","automargin":true,"zerolinewidth":2},"yaxis":{"gridcolor":"white","linecolor":"white","ticks":"","title":{"standoff":15},"zerolinecolor":"white","automargin":true,"zerolinewidth":2},"scene":{"xaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2},"yaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2},"zaxis":{"backgroundcolor":"#E5ECF6","gridcolor":"white","linecolor":"white","showbackground":true,"ticks":"","zerolinecolor":"white","gridwidth":2}},"shapedefaults":{"line":{"color":"#2a3f5f"}},"annotationdefaults":{"arrowcolor":"#2a3f5f","arrowhead":0,"arrowwidth":1},"geo":{"bgcolor":"white","landcolor":"#E5ECF6","subunitcolor":"white","showland":true,"showlakes":true,"lakecolor":"white"},"title":{"x":0.05},"mapbox":{"style":"light"}}},"title":{"font":{"size":18,"color":"#f0f6fc"},"text":"Per-Trade P&L"},"font":{"family":"Inter, system-ui, sans-serif","color":"#c9d1d9","size":12},"margin":{"l":50,"r":30,"t":50,"b":40},"xaxis":{"title":{"text":"Trade #"},"gridcolor":"#21262d","zerolinecolor":"#21262d"},"yaxis":{"title":{"text":"Net P&L ($)"},"gridcolor":"#21262d","zerolinecolor":"#21262d"},"height":350,"paper_bgcolor":"rgba(0,0,0,0)","plot_bgcolor":"#0d1117"},                        {"responsive": true}                    )                };            </script>        </div>
+        </div>
+        
+        <!-- Tab Navigation for Trade Table -->
+        <div class="tab-nav">
+            <button class="tab-btn active" onclick="showTab('all')">All Trades (58)</button>
+            <button class="tab-btn" onclick="showTab('winners')">Winners (35)</button>
+            <button class="tab-btn" onclick="showTab('losers')">Losers (23)</button>
+        </div>
+        
+        <div id="tab-all" class="tab-content active">
+            <div class="filter-bar">
+                <input type="text" class="filter-input" placeholder="🔍 Search trades by date, exit reason, strike..." onkeyup="filterTable(this, 'all')">
+            </div>
+            <div class="table-scroll">
+                <table id="trade-table-all">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Entry Time</th>
+                            <th>Exit Time</th>
+                            <th>Exit Reason</th>
+                            <th>Entry Price</th>
+                            <th>Strikes (C/P)</th>
+                            <th>Premium</th>
+                            <th>Slippage</th>
+                            <th>Net P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        
+        <tr class="trade-row positive">
+            <td>1</td>
+            <td>2025-08-23 08:00</td>
+            <td>2025-08-30 08:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$115,714</td>
+            <td>$127,300 / $104,100</td>
+            <td>$1,067.31</td>
+            <td>$133.33</td>
+            <td class="positive">$198.94</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>2</td>
+            <td>2025-08-30 09:00</td>
+            <td>2025-09-06 09:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$108,476</td>
+            <td>$119,300 / $97,600</td>
+            <td>$1,006.20</td>
+            <td>$80.50</td>
+            <td class="positive">$794.23</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>3</td>
+            <td>2025-09-06 10:00</td>
+            <td>2025-09-13 10:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$110,734</td>
+            <td>$121,800 / $99,700</td>
+            <td>$1,032.72</td>
+            <td>$82.62</td>
+            <td class="positive">$814.13</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>4</td>
+            <td>2025-09-13 11:00</td>
+            <td>2025-09-20 11:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$115,912</td>
+            <td>$127,500 / $104,300</td>
+            <td>$1,073.63</td>
+            <td>$85.89</td>
+            <td class="positive">$848.69</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>5</td>
+            <td>2025-09-20 12:00</td>
+            <td>2025-09-27 12:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$115,820</td>
+            <td>$127,400 / $104,200</td>
+            <td>$1,070.74</td>
+            <td>$131.63</td>
+            <td class="positive">$228.44</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>6</td>
+            <td>2025-09-27 13:00</td>
+            <td>2025-10-04 13:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$109,265</td>
+            <td>$120,200 / $98,300</td>
+            <td>$1,008.63</td>
+            <td>$145.22</td>
+            <td class="negative">$-79.12</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>7</td>
+            <td>2025-10-04 14:00</td>
+            <td>2025-10-11 14:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$121,944</td>
+            <td>$134,100 / $109,700</td>
+            <td>$1,130.56</td>
+            <td>$162.34</td>
+            <td class="negative">$-74.39</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>8</td>
+            <td>2025-10-11 15:00</td>
+            <td>2025-10-12 19:00</td>
+            <td><span class="badge badge-red">Call SL Hit</span></td>
+            <td>$111,744</td>
+            <td>$122,900 / $100,600</td>
+            <td>$1,042.38</td>
+            <td>$194.33</td>
+            <td class="negative">$-673.02</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>9</td>
+            <td>2025-10-12 20:00</td>
+            <td>2025-10-19 20:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$114,864</td>
+            <td>$126,400 / $103,400</td>
+            <td>$1,062.47</td>
+            <td>$131.58</td>
+            <td class="positive">$213.54</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>10</td>
+            <td>2025-10-19 21:00</td>
+            <td>2025-10-26 21:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$108,667</td>
+            <td>$119,500 / $97,800</td>
+            <td>$1,012.23</td>
+            <td>$145.97</td>
+            <td class="negative">$-78.43</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>11</td>
+            <td>2025-10-26 22:00</td>
+            <td>2025-11-02 22:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$114,632</td>
+            <td>$126,100 / $103,200</td>
+            <td>$1,066.50</td>
+            <td>$144.27</td>
+            <td class="positive">$51.07</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>12</td>
+            <td>2025-11-02 23:00</td>
+            <td>2025-11-09 23:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$110,495</td>
+            <td>$121,500 / $99,400</td>
+            <td>$1,025.51</td>
+            <td>$127.66</td>
+            <td class="positive">$197.21</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>13</td>
+            <td>2025-11-10 00:00</td>
+            <td>2025-11-17 00:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$106,261</td>
+            <td>$116,900 / $95,600</td>
+            <td>$980.63</td>
+            <td>$121.49</td>
+            <td class="positive">$197.86</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>14</td>
+            <td>2025-11-17 01:00</td>
+            <td>2025-11-24 01:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$94,732</td>
+            <td>$104,200 / $85,300</td>
+            <td>$884.18</td>
+            <td>$112.88</td>
+            <td class="positive">$133.75</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>15</td>
+            <td>2025-11-24 02:00</td>
+            <td>2025-11-24 20:00</td>
+            <td><span class="badge badge-red">Call SL Hit</span></td>
+            <td>$87,478</td>
+            <td>$96,200 / $78,700</td>
+            <td>$811.41</td>
+            <td>$153.77</td>
+            <td class="negative">$-558.00</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>16</td>
+            <td>2025-11-24 21:00</td>
+            <td>2025-12-01 21:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$88,714</td>
+            <td>$97,600 / $79,800</td>
+            <td>$816.77</td>
+            <td>$100.72</td>
+            <td class="positive">$168.46</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>17</td>
+            <td>2025-12-01 22:00</td>
+            <td>2025-12-08 22:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$86,529</td>
+            <td>$95,200 / $77,900</td>
+            <td>$803.40</td>
+            <td>$131.41</td>
+            <td class="negative">$-273.09</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>18</td>
+            <td>2025-12-08 23:00</td>
+            <td>2025-12-15 23:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$90,600</td>
+            <td>$99,700 / $81,500</td>
+            <td>$831.62</td>
+            <td>$123.73</td>
+            <td class="negative">$-115.16</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>19</td>
+            <td>2025-12-16 00:00</td>
+            <td>2025-12-23 00:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$85,808</td>
+            <td>$94,400 / $77,200</td>
+            <td>$791.88</td>
+            <td>$113.17</td>
+            <td class="negative">$-48.33</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>20</td>
+            <td>2025-12-23 01:00</td>
+            <td>2025-12-30 01:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$88,472</td>
+            <td>$97,300 / $79,600</td>
+            <td>$820.43</td>
+            <td>$102.72</td>
+            <td class="positive">$148.83</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>21</td>
+            <td>2025-12-30 02:00</td>
+            <td>2026-01-06 02:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$87,073</td>
+            <td>$95,800 / $78,400</td>
+            <td>$809.41</td>
+            <td>$119.35</td>
+            <td class="negative">$-99.33</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>22</td>
+            <td>2026-01-06 03:00</td>
+            <td>2026-01-13 03:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$93,726</td>
+            <td>$103,100 / $84,400</td>
+            <td>$874.63</td>
+            <td>$114.64</td>
+            <td class="positive">$90.52</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>23</td>
+            <td>2026-01-13 04:00</td>
+            <td>2026-01-20 04:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$91,486</td>
+            <td>$100,600 / $82,300</td>
+            <td>$848.83</td>
+            <td>$127.67</td>
+            <td class="negative">$-136.45</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>24</td>
+            <td>2026-01-20 05:00</td>
+            <td>2026-01-27 05:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$91,590</td>
+            <td>$100,700 / $82,400</td>
+            <td>$852.24</td>
+            <td>$104.90</td>
+            <td class="positive">$179.87</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>25</td>
+            <td>2026-01-27 06:00</td>
+            <td>2026-02-03 06:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$88,294</td>
+            <td>$97,100 / $79,500</td>
+            <td>$825.90</td>
+            <td>$105.13</td>
+            <td class="positive">$130.49</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>26</td>
+            <td>2026-02-03 07:00</td>
+            <td>2026-02-10 07:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$78,716</td>
+            <td>$86,600 / $70,800</td>
+            <td>$724.08</td>
+            <td>$93.71</td>
+            <td class="positive">$92.08</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>27</td>
+            <td>2026-02-10 08:00</td>
+            <td>2026-02-17 08:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$69,092</td>
+            <td>$76,000 / $62,200</td>
+            <td>$643.13</td>
+            <td>$81.66</td>
+            <td class="positive">$101.74</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>28</td>
+            <td>2026-02-17 09:00</td>
+            <td>2026-02-24 09:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$68,088</td>
+            <td>$74,900 / $61,300</td>
+            <td>$633.67</td>
+            <td>$81.89</td>
+            <td class="positive">$82.00</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>29</td>
+            <td>2026-02-24 10:00</td>
+            <td>2026-03-03 10:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$63,250</td>
+            <td>$69,600 / $56,900</td>
+            <td>$581.22</td>
+            <td>$84.04</td>
+            <td class="negative">$-49.35</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>30</td>
+            <td>2026-03-03 11:00</td>
+            <td>2026-03-10 11:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$67,000</td>
+            <td>$73,700 / $60,300</td>
+            <td>$621.70</td>
+            <td>$91.50</td>
+            <td class="negative">$-73.66</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>31</td>
+            <td>2026-03-10 12:00</td>
+            <td>2026-03-17 12:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$70,486</td>
+            <td>$77,500 / $63,400</td>
+            <td>$654.03</td>
+            <td>$94.03</td>
+            <td class="negative">$-47.22</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>32</td>
+            <td>2026-03-17 13:00</td>
+            <td>2026-03-18 14:00</td>
+            <td><span class="badge badge-red">Both SL Hit</span></td>
+            <td>$73,572</td>
+            <td>$80,900 / $66,200</td>
+            <td>$684.45</td>
+            <td>$137.94</td>
+            <td class="negative">$-581.14</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>33</td>
+            <td>2026-03-18 15:00</td>
+            <td>2026-03-25 15:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$71,450</td>
+            <td>$78,600 / $64,300</td>
+            <td>$661.81</td>
+            <td>$81.84</td>
+            <td class="positive">$133.59</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>34</td>
+            <td>2026-03-25 16:00</td>
+            <td>2026-04-01 16:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$71,306</td>
+            <td>$78,400 / $64,200</td>
+            <td>$668.64</td>
+            <td>$83.93</td>
+            <td class="positive">$119.80</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>35</td>
+            <td>2026-04-01 17:00</td>
+            <td>2026-04-08 17:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$68,240</td>
+            <td>$75,100 / $61,400</td>
+            <td>$627.21</td>
+            <td>$81.70</td>
+            <td class="positive">$68.92</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>36</td>
+            <td>2026-04-08 18:00</td>
+            <td>2026-04-15 18:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$71,064</td>
+            <td>$78,200 / $64,000</td>
+            <td>$660.64</td>
+            <td>$93.19</td>
+            <td class="negative">$-23.72</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>37</td>
+            <td>2026-04-15 19:00</td>
+            <td>2026-04-17 13:00</td>
+            <td><span class="badge badge-red">Call SL Hit</span></td>
+            <td>$75,120</td>
+            <td>$82,600 / $67,600</td>
+            <td>$699.89</td>
+            <td>$132.41</td>
+            <td class="negative">$-478.11</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>38</td>
+            <td>2026-04-17 14:00</td>
+            <td>2026-04-24 14:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$77,822</td>
+            <td>$85,600 / $70,000</td>
+            <td>$718.21</td>
+            <td>$90.30</td>
+            <td class="positive">$124.51</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>39</td>
+            <td>2026-04-24 15:00</td>
+            <td>2026-05-01 15:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$77,964</td>
+            <td>$85,800 / $70,200</td>
+            <td>$722.37</td>
+            <td>$57.79</td>
+            <td class="positive">$570.84</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>40</td>
+            <td>2026-05-01 16:00</td>
+            <td>2026-05-08 16:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$78,238</td>
+            <td>$86,100 / $70,400</td>
+            <td>$719.95</td>
+            <td>$57.60</td>
+            <td class="positive">$567.54</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>41</td>
+            <td>2026-05-08 17:00</td>
+            <td>2026-05-15 17:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$80,170</td>
+            <td>$88,200 / $72,200</td>
+            <td>$747.58</td>
+            <td>$59.81</td>
+            <td class="positive">$591.99</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>42</td>
+            <td>2026-05-15 18:00</td>
+            <td>2026-05-22 18:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$79,256</td>
+            <td>$87,200 / $71,300</td>
+            <td>$729.91</td>
+            <td>$58.39</td>
+            <td class="positive">$578.08</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>43</td>
+            <td>2026-05-22 19:00</td>
+            <td>2026-05-29 19:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$75,801</td>
+            <td>$83,400 / $68,200</td>
+            <td>$698.84</td>
+            <td>$86.97</td>
+            <td class="positive">$133.74</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>44</td>
+            <td>2026-05-29 20:00</td>
+            <td>2026-06-05 20:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$73,673</td>
+            <td>$81,000 / $66,300</td>
+            <td>$687.72</td>
+            <td>$85.70</td>
+            <td class="positive">$134.72</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>45</td>
+            <td>2026-06-05 21:00</td>
+            <td>2026-06-08 00:00</td>
+            <td><span class="badge badge-red">Call SL Hit</span></td>
+            <td>$61,652</td>
+            <td>$67,800 / $55,500</td>
+            <td>$575.51</td>
+            <td>$108.09</td>
+            <td class="negative">$-382.50</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>46</td>
+            <td>2026-06-08 01:00</td>
+            <td>2026-06-15 01:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$63,132</td>
+            <td>$69,400 / $56,800</td>
+            <td>$589.06</td>
+            <td>$76.65</td>
+            <td class="positive">$67.48</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>47</td>
+            <td>2026-06-15 02:00</td>
+            <td>2026-06-22 02:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$65,384</td>
+            <td>$71,900 / $58,800</td>
+            <td>$604.34</td>
+            <td>$88.09</td>
+            <td class="negative">$-58.93</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>48</td>
+            <td>2026-06-22 03:00</td>
+            <td>2026-06-23 08:00</td>
+            <td><span class="badge badge-red">Both SL Hit</span></td>
+            <td>$63,916</td>
+            <td>$70,300 / $57,500</td>
+            <td>$591.30</td>
+            <td>$114.02</td>
+            <td class="negative">$-433.28</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>49</td>
+            <td>2026-06-23 09:00</td>
+            <td>2026-06-30 09:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$62,446</td>
+            <td>$68,700 / $56,200</td>
+            <td>$578.17</td>
+            <td>$71.46</td>
+            <td class="positive">$118.09</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>50</td>
+            <td>2026-06-30 10:00</td>
+            <td>2026-07-01 21:00</td>
+            <td><span class="badge badge-red">Call SL Hit</span></td>
+            <td>$59,292</td>
+            <td>$65,200 / $53,400</td>
+            <td>$556.79</td>
+            <td>$105.29</td>
+            <td class="negative">$-379.21</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>51</td>
+            <td>2026-07-01 22:00</td>
+            <td>2026-07-02 12:00</td>
+            <td><span class="badge badge-red">Call SL Hit</span></td>
+            <td>$60,478</td>
+            <td>$66,500 / $54,400</td>
+            <td>$560.90</td>
+            <td>$106.14</td>
+            <td class="negative">$-383.76</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>52</td>
+            <td>2026-07-02 13:00</td>
+            <td>2026-07-09 13:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$61,843</td>
+            <td>$68,000 / $55,700</td>
+            <td>$581.62</td>
+            <td>$46.53</td>
+            <td class="positive">$460.24</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>53</td>
+            <td>2026-07-09 14:00</td>
+            <td>2026-07-16 14:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$62,974</td>
+            <td>$69,300 / $56,700</td>
+            <td>$583.55</td>
+            <td>$82.08</td>
+            <td class="negative">$-17.23</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>54</td>
+            <td>2026-07-16 15:00</td>
+            <td>2026-07-23 15:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$64,694</td>
+            <td>$71,200 / $58,200</td>
+            <td>$593.32</td>
+            <td>$73.34</td>
+            <td class="positive">$119.18</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>55</td>
+            <td>2026-07-23 16:00</td>
+            <td>2026-07-30 16:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$64,750</td>
+            <td>$71,200 / $58,300</td>
+            <td>$606.51</td>
+            <td>$48.52</td>
+            <td class="positive">$480.25</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>56</td>
+            <td>2026-07-30 17:00</td>
+            <td>2026-08-06 17:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$64,917</td>
+            <td>$71,400 / $58,400</td>
+            <td>$600.60</td>
+            <td>$74.54</td>
+            <td class="positive">$117.51</td>
+        </tr>
+        <tr class="trade-row positive">
+            <td>57</td>
+            <td>2026-08-06 18:00</td>
+            <td>2026-08-13 18:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$64,366</td>
+            <td>$70,800 / $57,900</td>
+            <td>$594.30</td>
+            <td>$47.54</td>
+            <td class="positive">$470.20</td>
+        </tr>
+        <tr class="trade-row negative">
+            <td>58</td>
+            <td>2026-08-13 19:00</td>
+            <td>2026-08-20 19:00</td>
+            <td><span class="badge badge-cyan">Expiry</span></td>
+            <td>$63,404</td>
+            <td>$69,700 / $57,100</td>
+            <td>$597.56</td>
+            <td>$101.64</td>
+            <td class="negative">$-257.59</td>
+        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div id="tab-winners" class="tab-content">
+            <div class="table-scroll">
+                <table id="trade-table-winners">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Entry Time</th>
+                            <th>Exit Time</th>
+                            <th>Exit Reason</th>
+                            <th>Entry Price</th>
+                            <th>Strikes (C/P)</th>
+                            <th>Premium</th>
+                            <th>Slippage</th>
+                            <th>Net P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        
+                        <tr class="trade-row positive">
+                            <td>1</td>
+                            <td>2025-08-23 08:00</td>
+                            <td>2025-08-30 08:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$115,714</td>
+                            <td>$127,300 / $104,100</td>
+                            <td>$1,067.31</td>
+                            <td>$133.33</td>
+                            <td class="positive">$198.94</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>2</td>
+                            <td>2025-08-30 09:00</td>
+                            <td>2025-09-06 09:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$108,476</td>
+                            <td>$119,300 / $97,600</td>
+                            <td>$1,006.20</td>
+                            <td>$80.50</td>
+                            <td class="positive">$794.23</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>3</td>
+                            <td>2025-09-06 10:00</td>
+                            <td>2025-09-13 10:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$110,734</td>
+                            <td>$121,800 / $99,700</td>
+                            <td>$1,032.72</td>
+                            <td>$82.62</td>
+                            <td class="positive">$814.13</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>4</td>
+                            <td>2025-09-13 11:00</td>
+                            <td>2025-09-20 11:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$115,912</td>
+                            <td>$127,500 / $104,300</td>
+                            <td>$1,073.63</td>
+                            <td>$85.89</td>
+                            <td class="positive">$848.69</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>5</td>
+                            <td>2025-09-20 12:00</td>
+                            <td>2025-09-27 12:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$115,820</td>
+                            <td>$127,400 / $104,200</td>
+                            <td>$1,070.74</td>
+                            <td>$131.63</td>
+                            <td class="positive">$228.44</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>9</td>
+                            <td>2025-10-12 20:00</td>
+                            <td>2025-10-19 20:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$114,864</td>
+                            <td>$126,400 / $103,400</td>
+                            <td>$1,062.47</td>
+                            <td>$131.58</td>
+                            <td class="positive">$213.54</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>11</td>
+                            <td>2025-10-26 22:00</td>
+                            <td>2025-11-02 22:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$114,632</td>
+                            <td>$126,100 / $103,200</td>
+                            <td>$1,066.50</td>
+                            <td>$144.27</td>
+                            <td class="positive">$51.07</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>12</td>
+                            <td>2025-11-02 23:00</td>
+                            <td>2025-11-09 23:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$110,495</td>
+                            <td>$121,500 / $99,400</td>
+                            <td>$1,025.51</td>
+                            <td>$127.66</td>
+                            <td class="positive">$197.21</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>13</td>
+                            <td>2025-11-10 00:00</td>
+                            <td>2025-11-17 00:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$106,261</td>
+                            <td>$116,900 / $95,600</td>
+                            <td>$980.63</td>
+                            <td>$121.49</td>
+                            <td class="positive">$197.86</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>14</td>
+                            <td>2025-11-17 01:00</td>
+                            <td>2025-11-24 01:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$94,732</td>
+                            <td>$104,200 / $85,300</td>
+                            <td>$884.18</td>
+                            <td>$112.88</td>
+                            <td class="positive">$133.75</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>16</td>
+                            <td>2025-11-24 21:00</td>
+                            <td>2025-12-01 21:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$88,714</td>
+                            <td>$97,600 / $79,800</td>
+                            <td>$816.77</td>
+                            <td>$100.72</td>
+                            <td class="positive">$168.46</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>20</td>
+                            <td>2025-12-23 01:00</td>
+                            <td>2025-12-30 01:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$88,472</td>
+                            <td>$97,300 / $79,600</td>
+                            <td>$820.43</td>
+                            <td>$102.72</td>
+                            <td class="positive">$148.83</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>22</td>
+                            <td>2026-01-06 03:00</td>
+                            <td>2026-01-13 03:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$93,726</td>
+                            <td>$103,100 / $84,400</td>
+                            <td>$874.63</td>
+                            <td>$114.64</td>
+                            <td class="positive">$90.52</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>24</td>
+                            <td>2026-01-20 05:00</td>
+                            <td>2026-01-27 05:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$91,590</td>
+                            <td>$100,700 / $82,400</td>
+                            <td>$852.24</td>
+                            <td>$104.90</td>
+                            <td class="positive">$179.87</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>25</td>
+                            <td>2026-01-27 06:00</td>
+                            <td>2026-02-03 06:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$88,294</td>
+                            <td>$97,100 / $79,500</td>
+                            <td>$825.90</td>
+                            <td>$105.13</td>
+                            <td class="positive">$130.49</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>26</td>
+                            <td>2026-02-03 07:00</td>
+                            <td>2026-02-10 07:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$78,716</td>
+                            <td>$86,600 / $70,800</td>
+                            <td>$724.08</td>
+                            <td>$93.71</td>
+                            <td class="positive">$92.08</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>27</td>
+                            <td>2026-02-10 08:00</td>
+                            <td>2026-02-17 08:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$69,092</td>
+                            <td>$76,000 / $62,200</td>
+                            <td>$643.13</td>
+                            <td>$81.66</td>
+                            <td class="positive">$101.74</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>28</td>
+                            <td>2026-02-17 09:00</td>
+                            <td>2026-02-24 09:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$68,088</td>
+                            <td>$74,900 / $61,300</td>
+                            <td>$633.67</td>
+                            <td>$81.89</td>
+                            <td class="positive">$82.00</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>33</td>
+                            <td>2026-03-18 15:00</td>
+                            <td>2026-03-25 15:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$71,450</td>
+                            <td>$78,600 / $64,300</td>
+                            <td>$661.81</td>
+                            <td>$81.84</td>
+                            <td class="positive">$133.59</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>34</td>
+                            <td>2026-03-25 16:00</td>
+                            <td>2026-04-01 16:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$71,306</td>
+                            <td>$78,400 / $64,200</td>
+                            <td>$668.64</td>
+                            <td>$83.93</td>
+                            <td class="positive">$119.80</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>35</td>
+                            <td>2026-04-01 17:00</td>
+                            <td>2026-04-08 17:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$68,240</td>
+                            <td>$75,100 / $61,400</td>
+                            <td>$627.21</td>
+                            <td>$81.70</td>
+                            <td class="positive">$68.92</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>38</td>
+                            <td>2026-04-17 14:00</td>
+                            <td>2026-04-24 14:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$77,822</td>
+                            <td>$85,600 / $70,000</td>
+                            <td>$718.21</td>
+                            <td>$90.30</td>
+                            <td class="positive">$124.51</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>39</td>
+                            <td>2026-04-24 15:00</td>
+                            <td>2026-05-01 15:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$77,964</td>
+                            <td>$85,800 / $70,200</td>
+                            <td>$722.37</td>
+                            <td>$57.79</td>
+                            <td class="positive">$570.84</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>40</td>
+                            <td>2026-05-01 16:00</td>
+                            <td>2026-05-08 16:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$78,238</td>
+                            <td>$86,100 / $70,400</td>
+                            <td>$719.95</td>
+                            <td>$57.60</td>
+                            <td class="positive">$567.54</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>41</td>
+                            <td>2026-05-08 17:00</td>
+                            <td>2026-05-15 17:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$80,170</td>
+                            <td>$88,200 / $72,200</td>
+                            <td>$747.58</td>
+                            <td>$59.81</td>
+                            <td class="positive">$591.99</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>42</td>
+                            <td>2026-05-15 18:00</td>
+                            <td>2026-05-22 18:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$79,256</td>
+                            <td>$87,200 / $71,300</td>
+                            <td>$729.91</td>
+                            <td>$58.39</td>
+                            <td class="positive">$578.08</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>43</td>
+                            <td>2026-05-22 19:00</td>
+                            <td>2026-05-29 19:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$75,801</td>
+                            <td>$83,400 / $68,200</td>
+                            <td>$698.84</td>
+                            <td>$86.97</td>
+                            <td class="positive">$133.74</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>44</td>
+                            <td>2026-05-29 20:00</td>
+                            <td>2026-06-05 20:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$73,673</td>
+                            <td>$81,000 / $66,300</td>
+                            <td>$687.72</td>
+                            <td>$85.70</td>
+                            <td class="positive">$134.72</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>46</td>
+                            <td>2026-06-08 01:00</td>
+                            <td>2026-06-15 01:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$63,132</td>
+                            <td>$69,400 / $56,800</td>
+                            <td>$589.06</td>
+                            <td>$76.65</td>
+                            <td class="positive">$67.48</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>49</td>
+                            <td>2026-06-23 09:00</td>
+                            <td>2026-06-30 09:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$62,446</td>
+                            <td>$68,700 / $56,200</td>
+                            <td>$578.17</td>
+                            <td>$71.46</td>
+                            <td class="positive">$118.09</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>52</td>
+                            <td>2026-07-02 13:00</td>
+                            <td>2026-07-09 13:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$61,843</td>
+                            <td>$68,000 / $55,700</td>
+                            <td>$581.62</td>
+                            <td>$46.53</td>
+                            <td class="positive">$460.24</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>54</td>
+                            <td>2026-07-16 15:00</td>
+                            <td>2026-07-23 15:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$64,694</td>
+                            <td>$71,200 / $58,200</td>
+                            <td>$593.32</td>
+                            <td>$73.34</td>
+                            <td class="positive">$119.18</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>55</td>
+                            <td>2026-07-23 16:00</td>
+                            <td>2026-07-30 16:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$64,750</td>
+                            <td>$71,200 / $58,300</td>
+                            <td>$606.51</td>
+                            <td>$48.52</td>
+                            <td class="positive">$480.25</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>56</td>
+                            <td>2026-07-30 17:00</td>
+                            <td>2026-08-06 17:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$64,917</td>
+                            <td>$71,400 / $58,400</td>
+                            <td>$600.60</td>
+                            <td>$74.54</td>
+                            <td class="positive">$117.51</td>
+                        </tr>
+                        <tr class="trade-row positive">
+                            <td>57</td>
+                            <td>2026-08-06 18:00</td>
+                            <td>2026-08-13 18:00</td>
+                            <td><span class="badge badge-green">Expiry</span></td>
+                            <td>$64,366</td>
+                            <td>$70,800 / $57,900</td>
+                            <td>$594.30</td>
+                            <td>$47.54</td>
+                            <td class="positive">$470.20</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div id="tab-losers" class="tab-content">
+            <div class="table-scroll">
+                <table id="trade-table-losers">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Entry Time</th>
+                            <th>Exit Time</th>
+                            <th>Exit Reason</th>
+                            <th>Entry Price</th>
+                            <th>Strikes (C/P)</th>
+                            <th>Premium</th>
+                            <th>Slippage</th>
+                            <th>Net P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        
+                        <tr class="trade-row negative">
+                            <td>6</td>
+                            <td>2025-09-27 13:00</td>
+                            <td>2025-10-04 13:00</td>
+                            <td><span class="badge badge-red">Expiry</span></td>
+                            <td>$109,265</td>
+                            <td>$120,200 / $98,300</td>
+                            <td>$1,008.63</td>
+                            <td>$145.22</td>
+                            <td class="negative">$-79.12</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>7</td>
+                            <td>2025-10-04 14:00</td>
+                            <td>2025-10-11 14:00</td>
+                            <td><span class="badge badge-red">Expiry</span></td>
+                            <td>$121,944</td>
+                            <td>$134,100 / $109,700</td>
+                            <td>$1,130.56</td>
+                            <td>$162.34</td>
+                            <td class="negative">$-74.39</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>8</td>
+                            <td>2025-10-11 15:00</td>
+                            <td>2025-10-12 19:00</td>
+                            <td><span class="badge badge-red">Call SL Hit</span></td>
+                            <td>$111,744</td>
+                            <td>$122,900 / $100,600</td>
+                            <td>$1,042.38</td>
+                            <td>$194.33</td>
+                            <td class="negative">$-673.02</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>10</td>
+                            <td>2025-10-19 21:00</td>
+                            <td>2025-10-26 21:00</td>
+                            <td><span class="badge badge-red">Expiry</span></td>
+                            <td>$108,667</td>
+                            <td>$119,500 / $97,800</td>
+                            <td>$1,012.23</td>
+                            <td>$145.97</td>
+                            <td class="negative">$-78.43</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>15</td>
+                            <td>2025-11-24 02:00</td>
+                            <td>2025-11-24 20:00</td>
+                            <td><span class="badge badge-red">Call SL Hit</span></td>
+                            <td>$87,478</td>
+                            <td>$96,200 / $78,700</td>
+                            <td>$811.41</td>
+                            <td>$153.77</td>
+                            <td class="negative">$-558.00</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>17</td>
+                            <td>2025-12-01 22:00</td>
+                            <td>2025-12-08 22:00</td>
+                            <td><span class="badge badge-red">Expiry</span></td>
+                            <td>$86,529</td>
+                            <td>$95,200 / $77,900</td>
+                            <td>$803.40</td>
+                            <td>$131.41</td>
+                            <td class="negative">$-273.09</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>18</td>
+                            <td>2025-12-08 23:00</td>
+                            <td>2025-12-15 23:00</td>
+                            <td><span class="badge badge-red">Expiry</span></td>
+                            <td>$90,600</td>
+                            <td>$99,700 / $81,500</td>
+                            <td>$831.62</td>
+                            <td>$123.73</td>
+                            <td class="negative">$-115.16</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>19</td>
+                            <td>2025-12-16 00:00</td>
+                            <td>2025-12-23 00:00</td>
+                            <td><span class="badge badge-red">Expiry</span></td>
+                            <td>$85,808</td>
+                            <td>$94,400 / $77,200</td>
+                            <td>$791.88</td>
+                            <td>$113.17</td>
+                            <td class="negative">$-48.33</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>21</td>
+                            <td>2025-12-30 02:00</td>
+                            <td>2026-01-06 02:00</td>
+                            <td><span class="badge badge-red">Expiry</span></td>
+                            <td>$87,073</td>
+                            <td>$95,800 / $78,400</td>
+                            <td>$809.41</td>
+                            <td>$119.35</td>
+                            <td class="negative">$-99.33</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>23</td>
+                            <td>2026-01-13 04:00</td>
+                            <td>2026-01-20 04:00</td>
+                            <td><span class="badge badge-red">Expiry</span></td>
+                            <td>$91,486</td>
+                            <td>$100,600 / $82,300</td>
+                            <td>$848.83</td>
+                            <td>$127.67</td>
+                            <td class="negative">$-136.45</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>29</td>
+                            <td>2026-02-24 10:00</td>
+                            <td>2026-03-03 10:00</td>
+                            <td><span class="badge badge-red">Expiry</span></td>
+                            <td>$63,250</td>
+                            <td>$69,600 / $56,900</td>
+                            <td>$581.22</td>
+                            <td>$84.04</td>
+                            <td class="negative">$-49.35</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>30</td>
+                            <td>2026-03-03 11:00</td>
+                            <td>2026-03-10 11:00</td>
+                            <td><span class="badge badge-red">Expiry</span></td>
+                            <td>$67,000</td>
+                            <td>$73,700 / $60,300</td>
+                            <td>$621.70</td>
+                            <td>$91.50</td>
+                            <td class="negative">$-73.66</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>31</td>
+                            <td>2026-03-10 12:00</td>
+                            <td>2026-03-17 12:00</td>
+                            <td><span class="badge badge-red">Expiry</span></td>
+                            <td>$70,486</td>
+                            <td>$77,500 / $63,400</td>
+                            <td>$654.03</td>
+                            <td>$94.03</td>
+                            <td class="negative">$-47.22</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>32</td>
+                            <td>2026-03-17 13:00</td>
+                            <td>2026-03-18 14:00</td>
+                            <td><span class="badge badge-red">Both SL Hit</span></td>
+                            <td>$73,572</td>
+                            <td>$80,900 / $66,200</td>
+                            <td>$684.45</td>
+                            <td>$137.94</td>
+                            <td class="negative">$-581.14</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>36</td>
+                            <td>2026-04-08 18:00</td>
+                            <td>2026-04-15 18:00</td>
+                            <td><span class="badge badge-red">Expiry</span></td>
+                            <td>$71,064</td>
+                            <td>$78,200 / $64,000</td>
+                            <td>$660.64</td>
+                            <td>$93.19</td>
+                            <td class="negative">$-23.72</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>37</td>
+                            <td>2026-04-15 19:00</td>
+                            <td>2026-04-17 13:00</td>
+                            <td><span class="badge badge-red">Call SL Hit</span></td>
+                            <td>$75,120</td>
+                            <td>$82,600 / $67,600</td>
+                            <td>$699.89</td>
+                            <td>$132.41</td>
+                            <td class="negative">$-478.11</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>45</td>
+                            <td>2026-06-05 21:00</td>
+                            <td>2026-06-08 00:00</td>
+                            <td><span class="badge badge-red">Call SL Hit</span></td>
+                            <td>$61,652</td>
+                            <td>$67,800 / $55,500</td>
+                            <td>$575.51</td>
+                            <td>$108.09</td>
+                            <td class="negative">$-382.50</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>47</td>
+                            <td>2026-06-15 02:00</td>
+                            <td>2026-06-22 02:00</td>
+                            <td><span class="badge badge-red">Expiry</span></td>
+                            <td>$65,384</td>
+                            <td>$71,900 / $58,800</td>
+                            <td>$604.34</td>
+                            <td>$88.09</td>
+                            <td class="negative">$-58.93</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>48</td>
+                            <td>2026-06-22 03:00</td>
+                            <td>2026-06-23 08:00</td>
+                            <td><span class="badge badge-red">Both SL Hit</span></td>
+                            <td>$63,916</td>
+                            <td>$70,300 / $57,500</td>
+                            <td>$591.30</td>
+                            <td>$114.02</td>
+                            <td class="negative">$-433.28</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>50</td>
+                            <td>2026-06-30 10:00</td>
+                            <td>2026-07-01 21:00</td>
+                            <td><span class="badge badge-red">Call SL Hit</span></td>
+                            <td>$59,292</td>
+                            <td>$65,200 / $53,400</td>
+                            <td>$556.79</td>
+                            <td>$105.29</td>
+                            <td class="negative">$-379.21</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>51</td>
+                            <td>2026-07-01 22:00</td>
+                            <td>2026-07-02 12:00</td>
+                            <td><span class="badge badge-red">Call SL Hit</span></td>
+                            <td>$60,478</td>
+                            <td>$66,500 / $54,400</td>
+                            <td>$560.90</td>
+                            <td>$106.14</td>
+                            <td class="negative">$-383.76</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>53</td>
+                            <td>2026-07-09 14:00</td>
+                            <td>2026-07-16 14:00</td>
+                            <td><span class="badge badge-red">Expiry</span></td>
+                            <td>$62,974</td>
+                            <td>$69,300 / $56,700</td>
+                            <td>$583.55</td>
+                            <td>$82.08</td>
+                            <td class="negative">$-17.23</td>
+                        </tr>
+                        <tr class="trade-row negative">
+                            <td>58</td>
+                            <td>2026-08-13 19:00</td>
+                            <td>2026-08-20 19:00</td>
+                            <td><span class="badge badge-red">Expiry</span></td>
+                            <td>$63,404</td>
+                            <td>$69,700 / $57,100</td>
+                            <td>$597.56</td>
+                            <td>$101.64</td>
+                            <td class="negative">$-257.59</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- Strategy Parameters Summary -->
+        <h2 class="section-title">Strategy Parameters</h2>
+        <div class="metrics-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));">
+            <div class="metric-card">
+                <div class="label">OTM Distance</div>
+                <div class="value cyan">10%</div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Stop Loss</div>
+                <div class="value amber">30%</div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Slippage Model</div>
+                <div class="value" style="color: var(--text-primary); font-size: 18px;">8% of premium</div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Trade Frequency</div>
+                <div class="value purple">Weekly</div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Implied Volatility</div>
+                <div class="value cyan">60%</div>
+            </div>
+            <div class="metric-card">
+                <div class="label">Taker Fee</div>
+                <div class="value" style="color: var(--text-primary); font-size: 18px;">3 bps</div>
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <div class="footer">
+            <p>Generated on 2026-08-23 12:35:32 &bull; 
+               Data: Delta Exchange BTCUSDT &bull; 
+               Strategy: Short Strangle (AlgoTest Classic)</p>
+            <p style="margin-top: 8px; color: var(--text-muted);">
+                ⚠️ Past performance does not guarantee future results. This backtest uses Black-Scholes pricing with constant 60% IV, 
+                which may differ from actual market conditions. Always validate with live paper trading before deploying capital.
+            </p>
+        </div>
+    </div>
+    
+    <script>
+        // Tab switching
+        function showTab(tab) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+            document.getElementById('tab-' + tab).classList.add('active');
+            event.target.classList.add('active');
+        }
+        
+        // Table search/filter
+        function filterTable(input, tabId) {
+            const filter = input.value.toLowerCase();
+            const table = document.getElementById('trade-table-' + tabId);
+            const rows = table.getElementsByTagName('tr');
+            for (let i = 1; i < rows.length; i++) {
+                const cells = rows[i].getElementsByTagName('td');
+                let match = false;
+                for (let j = 0; j < cells.length; j++) {
+                    if (cells[j].textContent.toLowerCase().includes(filter)) {
+                        match = true;
+                        break;
+                    }
+                }
+                rows[i].style.display = match ? '' : 'none';
+            }
+        }
+        
+        // Resize Plotly charts to fit containers
+        window.addEventListener('resize', function() {
+            document.querySelectorAll('.js-plotly-plot').forEach(function(plot) {
+                Plotly.Plots.resize(plot);
+            });
+        });
+        
+        // Initial resize after load
+        window.addEventListener('load', function() {
+            setTimeout(function() {
+                document.querySelectorAll('.js-plotly-plot').forEach(function(plot) {
+                    Plotly.Plots.resize(plot);
+                });
+            }, 100);
+        });
+    </script>
+</body>
+</html>
