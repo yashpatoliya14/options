@@ -59,3 +59,6 @@ class TelegramNotifier:
 
     def error(self, context: str, message: str) -> None:
         self._send(f"⚠️ ERROR\n\nContext: {context}\nMessage: {message}")
+
+    def status(self, message: str) -> None:
+        self._send(f"🤖 BOT UPDATE\n\n{message}")

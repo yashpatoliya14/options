@@ -246,6 +246,9 @@ def main():
     last_ts = store.get_state("last_candle_timestamp")
     poller = build_candle_stream_poller(real_client, last_ts)
 
+    startup_msg = f"Live algo started in {mode.upper()} mode.\nAsset: {CONFIG.underlying_symbol}"
+    log.info(startup_msg)
+    notifier.status(startup_msg)
     log.info("Entering poll loop. Waiting for closed 3h candles...")
     while True:
         try:
