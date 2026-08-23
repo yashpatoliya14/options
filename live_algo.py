@@ -84,10 +84,30 @@ def build_candle_stream_poller(client: DeltaClient, last_seen_ts: Optional[int])
     """
     def poll() -> Optional[Candle]:
         now = int(time.time())
-        raw = client.get_historical_candles(CONFIG.underlying_symbol, "3h", now - 3 * 3600 * 3, now)
+        try:
+            raw = client.get_historical_candles(CONFIG.underlying_symbol, "3h", now - 3 * 3600 * 3, now)
+        except Exception:
+            raw_1h = client.get_historical_candles(CONFIG.underlying_symbol, "1h", now - 3 * 3600 * 3, now)
+            if not raw_1h:
+                return None
+            raw_1h.sort(key=lambda r: int(r["time"]))
+            raw = []
+            start_idx = 0
+            while start_idx < len(raw_1h) and int(raw_1h[start_idx]["time"]) % 10800 != 0:
+                start_idx += 1
+            for i in range(start_idx, len(raw_1h) - 2, 3):
+                chunk = raw_1h[i:i + 3]
+                raw.append({
+                    "time": chunk[-1]["time"],
+                    "open": chunk[0]["open"],
+                    "high": max(float(c["high"]) for c in chunk),
+                    "low": min(float(c["low"]) for c in chunk),
+                    "close": chunk[-1]["close"]
+                })
+        
         if not raw:
             return None
-        raw.sort(key=lambda r: r["time"])
+        raw.sort(key=lambda r: int(r["time"]))
         latest = raw[-1]
         ts = int(latest["time"])
         nonlocal_last = poll.last_seen
