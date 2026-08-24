@@ -88,7 +88,14 @@ class DeltaClient(Broker):
         body_str = json.dumps(body)
         headers = self._signed_headers("POST", path, "", body_str)
         resp = self.session.post(url, data=body_str, headers=headers, timeout=15)
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            try:
+                detail = resp.json()
+            except ValueError:
+                detail = resp.text[:500]
+            raise requests.HTTPError(f"{exc}; Delta response: {detail}", response=resp) from exc
         return resp.json()
 
     # ---------- market data ----------
@@ -232,6 +239,7 @@ class DeltaClient(Broker):
                 "size": position.quantity,
                 "side": "buy",  # buying back to close a short option
                 "order_type": "market_order",
+                "reduce_only": True,
             })
             order = resp.get("result", {})
             return OrderResult(
