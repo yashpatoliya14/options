@@ -1,14 +1,15 @@
 """
 Option strike selection.
 
-Confirmed rule: select the strike whose price is NEAREST to the Supertrend
-reference price at the moment of the signal (not necessarily ATM relative to
-current spot -- these can differ if spot has moved since the signal candle
-closed).
-
 Confirmed direction mapping:
   Supertrend BUY  -> sell a PUT
   Supertrend SELL -> sell a CALL
+
+Strike rule:
+  - The selected strike must be strictly OTM relative to the Supertrend
+    reference price at signal time.
+  - Among available OTM strikes, choose the nearest strike to that
+    Supertrend reference price.
 """
 from typing import List, Optional
 
@@ -28,27 +29,30 @@ def select_strike(
     quotes: List[OptionQuote],
     reference_price: float,
     option_type: str,
-    otm_distance: float = 300.0,
+    otm_distance: float = 0.0,
 ) -> Optional[OptionQuote]:
     """
-    From a list of quotes (already filtered to one expiry), pick the one of
-    `option_type` whose strike is closest to the target OTM price.
-    
-    Target = reference_price - otm_distance (for puts)
-    Target = reference_price + otm_distance (for calls)
-    
-    Returns None if no quote of that type exists.
+    Select the nearest available STRICTLY OTM strike to `reference_price`.
+
+    For puts, OTM means strike < Supertrend reference price.
+    For calls, OTM means strike > Supertrend reference price.
+
+    `otm_distance` is retained for API compatibility, but is intentionally
+    not used as a target offset. The exchange option chain is discrete, so
+    the nearest actual OTM strike is selected from available quotes.
     """
     candidates = [q for q in quotes if q.option_type == option_type]
     if not candidates:
         return None
-        
-    # Calculate target OTM strike based on Supertrend reference price
+
     if option_type == "put":
-        target_strike = reference_price - otm_distance
+        otm_candidates = [q for q in candidates if q.strike < reference_price]
     elif option_type == "call":
-        target_strike = reference_price + otm_distance
+        otm_candidates = [q for q in candidates if q.strike > reference_price]
     else:
         raise ValueError(f"Unknown option_type: {option_type}")
-        
-    return min(candidates, key=lambda q: abs(q.strike - target_strike))
+
+    if not otm_candidates:
+        return None
+
+    return min(otm_candidates, key=lambda q: abs(q.strike - reference_price))
