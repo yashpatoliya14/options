@@ -209,6 +209,23 @@ class DeltaClient(Broker):
             return OrderResult(False, None, None, quantity, f"order_failed: {e}")
 
     def close_position(self, position: Position) -> OrderResult:
+        import datetime
+        try:
+            # Check if option has expired (Delta Exchange options expire at 12:00 PM UTC)
+            expiry_dt = datetime.datetime.fromisoformat(position.expiry).replace(
+                hour=12, minute=0, tzinfo=datetime.timezone.utc
+            )
+            if time.time() >= expiry_dt.timestamp():
+                return OrderResult(
+                    success=True, 
+                    order_id="auto-settled", 
+                    filled_premium=0.0, 
+                    quantity=position.quantity, 
+                    message="expired_settlement"
+                )
+        except Exception:
+            pass
+
         try:
             resp = self._post("/v2/orders", {
                 "product_symbol": position.symbol,

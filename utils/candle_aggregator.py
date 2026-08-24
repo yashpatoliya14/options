@@ -16,12 +16,12 @@ def aggregate_1h_to_3h(raw_1h_candles: List[Dict[str, Any]]) -> List[Candle]:
     Aggregate 1H candles to 3H candles.
     
     Rules:
-    1. Group 1H candles in sequential groups of 3
-    2. Open = open of first candle in group
-    3. High = maximum high in group
-    4. Low = minimum low in group  
-    5. Close = close of last candle in group
-    6. Timestamp = timestamp of last candle in group
+    1. Group 1H candles by exact 3H UTC boundaries (00:00, 03:00, 06:00...)
+    2. Open = open of first candle in bucket
+    3. High = maximum high in bucket
+    4. Low = minimum low in bucket  
+    5. Close = close of last candle in bucket
+    6. Timestamp = exact close time of the 3H bucket (bucket_start + 3h)
     
     Args:
         raw_1h_candles: List of 1H candle dicts with 'time', 'open', 'high', 'low', 'close'
@@ -32,21 +32,23 @@ def aggregate_1h_to_3h(raw_1h_candles: List[Dict[str, Any]]) -> List[Candle]:
     if not raw_1h_candles:
         return []
     
-    # Ensure candles are sorted by timestamp
+    # Ensure candles are sorted by timestamp (open time)
     sorted_candles = sorted(raw_1h_candles, key=lambda x: int(x["time"]))
     
-    candles_3h = []
-    
-    # Group into sets of 3
-    for i in range(0, len(sorted_candles) - 2, 3):
-        chunk = sorted_candles[i:i + 3]
+    # Group by 3H boundaries (10800 seconds)
+    buckets = {}
+    for c in sorted_candles:
+        ts = int(c["time"])
+        bucket_start = (ts // 10800) * 10800
+        if bucket_start not in buckets:
+            buckets[bucket_start] = []
+        buckets[bucket_start].append(c)
         
-        # Skip incomplete groups (should not happen with proper data)
-        if len(chunk) < 3:
-            continue
-            
+    candles_3h = []
+    for bucket_start in sorted(buckets.keys()):
+        chunk = buckets[bucket_start]
         candles_3h.append(Candle(
-            timestamp=int(chunk[-1]["time"]) + 3600,  # Ensure timestamp represents the exact CLOSE time
+            timestamp=bucket_start + 10800,  # Exact close time of the 3H candle
             open=float(chunk[0]["open"]),
             high=max(float(c["high"]) for c in chunk),
             low=min(float(c["low"]) for c in chunk),

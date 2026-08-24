@@ -3,11 +3,11 @@ BACKTEST REPORT - 2025
 
 STRATEGY PARAMETERS
 ------------------------------
-timeframe: 3h
+timeframe: 2h
 supertrend_atr_period: 16
 supertrend_multiplier: 1.5
-min_premium_usd: 300.0
-margin_budget_usd: 50.0
+min_premium_usd: 250.0
+margin_budget_usd: 1000.0
 contract_value_underlying: 0.001
 Fee Rate: 0.0100%
 Data Mode: reconstructed
@@ -15,38 +15,38 @@ Data Mode: reconstructed
 CAPITAL SUMMARY
 ------------------------------
 Initial Capital: $1,000.00
-Final Capital: $1,011.49
-Net P&L: $11.49
-Return: 1.15%
+Final Capital: $2,979.47
+Net P&L: $1,979.47
+Return: 197.95%
 
 TRADING STATISTICS
 ------------------------------
-Total Trades: 36
-Winning Trades: 22
-Losing Trades: 14
-Win Rate: 61.11%
-Profit Factor: 1.47
-Max Drawdown: $-7.58
-Average Trade P&L: $0.32
-Largest Win: $3.11
-Largest Loss: $-3.83
-Total Fees: $1.67
+Total Trades: 449
+Winning Trades: 271
+Losing Trades: 178
+Win Rate: 60.36%
+Profit Factor: 1.71
+Max Drawdown: $-263.75
+Average Trade P&L: $4.41
+Largest Win: $55.33
+Largest Loss: $-102.40
+Total Fees: $501.09
 
 TRADE DETAILS
 ------------------------------
-Trade 1: PUT Strike $98,000 Qty 3 P&L $2.34
-Trade 2: CALL Strike $98,000 Qty 2 P&L $-2.93
-Trade 3: CALL Strike $100,000 Qty 2 P&L $-3.18
-Trade 4: CALL Strike $102,000 Qty 2 P&L $2.22
-Trade 5: CALL Strike $102,000 Qty 2 P&L $1.47
-Trade 6: PUT Strike $101,000 Qty 3 P&L $-1.13
-Trade 7: CALL Strike $100,000 Qty 2 P&L $0.57
-Trade 8: PUT Strike $99,000 Qty 3 P&L $-0.73
-Trade 9: CALL Strike $98,000 Qty 2 P&L $1.62
-Trade 10: PUT Strike $98,000 Qty 3 P&L $1.36
-... and 26 more trades
+Trade 1: CALL Strike $95,950 Qty 50 P&L $-9.10
+Trade 2: PUT Strike $95,000 Qty 67 P&L $-0.06
+Trade 3: CALL Strike $102,000 Qty 47 P&L $35.25
+Trade 4: CALL Strike $96,900 Qty 50 P&L $-3.11
+Trade 5: PUT Strike $92,150 Qty 69 P&L $-0.55
+Trade 6: CALL Strike $95,000 Qty 50 P&L $2.26
+Trade 7: PUT Strike $93,100 Qty 69 P&L $25.25
+Trade 8: PUT Strike $95,000 Qty 67 P&L $-3.59
+Trade 9: CALL Strike $105,000 Qty 46 P&L $0.31
+Trade 10: PUT Strike $102,900 Qty 62 P&L $-14.10
+... and 439 more trades
 
 EXECUTION INFO
 ------------------------------
-Run at: 2026-08-23T22:25:46.525858
-Data Range: 2025-01-03T23:30:00 to 2025-12-31T23:30:00
+Run at: 2026-08-24T20:45:24.168518
+Data Range: 2025-01-02T09:30:00 to 2026-01-01T01:30:00

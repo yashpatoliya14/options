@@ -3,10 +3,10 @@ BACKTEST REPORT - 2024
 
 STRATEGY PARAMETERS
 ------------------------------
-timeframe: 3h
+timeframe: 2h
 supertrend_atr_period: 16
 supertrend_multiplier: 1.5
-min_premium_usd: 300.0
+min_premium_usd: 250.0
 margin_budget_usd: 50.0
 contract_value_underlying: 0.001
 Fee Rate: 0.0100%
@@ -14,39 +14,39 @@ Data Mode: reconstructed
 
 CAPITAL SUMMARY
 ------------------------------
-Initial Capital: $100,000.00
-Final Capital: $100,009.86
-Net P&L: $9.86
-Return: 0.01%
+Initial Capital: $1,000.00
+Final Capital: $1,079.52
+Net P&L: $79.52
+Return: 7.95%
 
 TRADING STATISTICS
 ------------------------------
-Total Trades: 23
-Winning Trades: 17
-Losing Trades: 6
-Win Rate: 73.91%
-Profit Factor: 2.20
-Max Drawdown: $-7.46
-Average Trade P&L: $0.43
-Largest Win: $2.50
-Largest Loss: $-7.10
-Total Fees: $1.03
+Total Trades: 257
+Winning Trades: 141
+Losing Trades: 116
+Win Rate: 54.86%
+Profit Factor: 1.89
+Max Drawdown: $-18.65
+Average Trade P&L: $0.31
+Largest Win: $3.19
+Largest Loss: $-6.50
+Total Fees: $12.74
 
 TRADE DETAILS
 ------------------------------
-Trade 1: CALL Strike $45,900 Qty 5 P&L $2.50
-Trade 2: CALL Strike $43,650 Qty 5 P&L $1.53
-Trade 3: CALL Strike $52,000 Qty 4 P&L $0.07
-Trade 4: PUT Strike $50,500 Qty 6 P&L $0.57
-Trade 5: CALL Strike $52,000 Qty 4 P&L $1.46
-Trade 6: CALL Strike $70,000 Qty 3 P&L $-0.36
-Trade 7: PUT Strike $70,000 Qty 4 P&L $-7.10
-Trade 8: CALL Strike $71,400 Qty 3 P&L $0.93
-Trade 9: CALL Strike $63,000 Qty 3 P&L $0.18
-Trade 10: CALL Strike $70,000 Qty 3 P&L $0.13
-... and 13 more trades
+Trade 1: CALL Strike $45,900 Qty 5 P&L $1.25
+Trade 2: CALL Strike $45,900 Qty 5 P&L $1.56
+Trade 3: CALL Strike $45,900 Qty 5 P&L $1.56
+Trade 4: CALL Strike $45,900 Qty 5 P&L $1.56
+Trade 5: CALL Strike $45,900 Qty 5 P&L $2.40
+Trade 6: CALL Strike $43,200 Qty 5 P&L $1.74
+Trade 7: CALL Strike $42,750 Qty 5 P&L $1.48
+Trade 8: CALL Strike $42,750 Qty 5 P&L $2.59
+Trade 9: CALL Strike $41,200 Qty 5 P&L $1.43
+Trade 10: CALL Strike $41,200 Qty 5 P&L $1.43
+... and 247 more trades
 
 EXECUTION INFO
 ------------------------------
-Run at: 2026-08-23T22:37:09.387944
-Data Range: 2024-01-12T15:30:00 to 2024-10-31T21:30:00
+Run at: 2026-08-24T20:42:44.658875
+Data Range: 2024-01-11T23:30:00 to 2024-12-31T23:30:00

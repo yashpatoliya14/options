@@ -32,14 +32,14 @@ def _bool_env(name: str, default: bool) -> bool:
 @dataclass(frozen=True)
 class StrategyConfig:
     # --- Supertrend ---
-    timeframe: str = os.getenv("TIMEFRAME", "3h")
-    supertrend_atr_period: int = _int_env("SUPERTREND_ATR_PERIOD", 10)
+    timeframe: str = os.getenv("TIMEFRAME", "2h")
+    supertrend_atr_period: int = _int_env("SUPERTREND_ATR_PERIOD", 16)
     supertrend_multiplier: float = _float_env("SUPERTREND_MULTIPLIER", 1.5)
 
     # --- Option selection ---
-    otm_distance_usd: float = _float_env("OTM_DISTANCE_USD", 300.0)
     strike_selection_method: str = os.getenv("STRIKE_SELECTION_METHOD", "supertrend_otm")
-    min_premium_usd: float = _float_env("MIN_PREMIUM", 300.0)
+    # Minimum premium of at least $250 per 1 BTC contract
+    min_premium_usd: float = _float_env("MIN_PREMIUM", 250.0)
     
     # --- Stop Loss ---
     stop_loss_percent: float = _float_env("STOP_LOSS_PERCENT", 20.0)

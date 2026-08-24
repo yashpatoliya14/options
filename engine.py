@@ -62,6 +62,8 @@ class StrategyEngine:
         self.current_position: Optional[Position] = existing_position
         self._last_trend: Optional[Trend] = None
         self._active_signal: Optional[str] = None
+        self._flat_reason: Optional[str] = None
+        
         if existing_position is not None:
             self._last_trend = (
                 Trend.BULLISH
@@ -70,11 +72,28 @@ class StrategyEngine:
             )
             self._active_signal = existing_position.strategy_direction
 
+    def _check_expirations(self, timestamp: int) -> None:
+        """Drop positions that have passed their expiration time."""
+        if self.current_position is None:
+            return
+        
+        import datetime
+        try:
+            expiry_dt = datetime.datetime.fromisoformat(self.current_position.expiry).replace(
+                hour=12, minute=0, tzinfo=datetime.timezone.utc
+            )
+            if timestamp >= expiry_dt.timestamp():
+                self._close_current_position(timestamp, reason="expired_settlement")
+        except Exception:
+            pass
+
     def on_candle_close(self, candle: Candle) -> Optional[SupertrendPoint]:
         """
-        Feed exactly one CLOSED 3H candle. Never call this with a forming/live
+        Feed exactly one CLOSED candle. Never call this with a forming/live
         candle -- the spec requires signals only on confirmed candle closes.
         """
+        self._check_expirations(candle.timestamp)
+        
         point = self.supertrend.update(candle)
         if point is None:
             return None  # still warming up (fewer than atr_period candles seen)
@@ -91,10 +110,13 @@ class StrategyEngine:
 
         if not point.signal_change:
             # Same trend persists.
-            # If we hit an SL, current_position is None but we still shouldn't re-enter.
             if self.current_position is None and self._active_signal == point.trend.value:
-                return point
+                # If we hit an SL, do not re-enter the same trend.
+                if self._flat_reason == "stop_loss":
+                    return point
+                # If we are flat because our option expired, or we just started up, attempt re-entry!
             elif self.current_position is not None:
+                # Position is already open, hold it.
                 return point
 
         self._active_signal = point.trend.value
@@ -148,10 +170,10 @@ class StrategyEngine:
         result = select_expiry_and_strike(
             broker=self.broker,
             underlying=self.cfg.underlying_asset,
-            reference_price=point.value,  # Use Supertrend Level, not underlying price
+            supertrend_value=point.value,
+            spot_price=point.reference_price,
             option_type=option_type,
             min_premium=self.cfg.min_premium_usd,
-            otm_distance=self.cfg.otm_distance_usd,
             as_of_timestamp=point.timestamp,
         )
 
@@ -198,6 +220,7 @@ class StrategyEngine:
             strategy_direction=point.trend.value,
         )
         self._last_trend = point.trend
+        self._flat_reason = None  # We successfully entered a trade
 
         self.on_event(EngineEvent(
             kind="trade_entry",
@@ -245,4 +268,5 @@ class StrategyEngine:
             },
         ))
         self.current_position = None
+        self._flat_reason = reason
         return True

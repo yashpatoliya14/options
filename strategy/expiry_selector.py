@@ -30,10 +30,10 @@ class ExpirySelectionResult:
 def select_expiry_and_strike(
     broker: Broker,
     underlying: str,
-    reference_price: float,
+    supertrend_value: float,
+    spot_price: float,
     option_type: str,
     min_premium: float,
-    otm_distance: float = 300.0,
     as_of_timestamp: Optional[int] = None,
 ) -> ExpirySelectionResult:
     expiries = broker.get_available_expiries(underlying, as_of_timestamp=as_of_timestamp)
@@ -49,10 +49,12 @@ def select_expiry_and_strike(
         elif i == 1:
             label = "tomorrow"
         else:
-            label = f"future_day_{i}"
+            # Spec explicitly states: Do NOT walk further into future expiries.
+            # If today and tomorrow don't have enough premium, we reject the trade.
+            break
 
         quotes = broker.get_option_chain(underlying, expiry, timestamp=as_of_timestamp)
-        best = select_strike(quotes, reference_price, option_type, otm_distance=otm_distance)
+        best = select_strike(quotes, supertrend_value, spot_price, option_type)
         if best is None:
             continue
             

@@ -3,11 +3,11 @@ BACKTEST REPORT - 2026
 
 STRATEGY PARAMETERS
 ------------------------------
-timeframe: 3h
+timeframe: 2h
 supertrend_atr_period: 16
 supertrend_multiplier: 1.5
-min_premium_usd: 300.0
-margin_budget_usd: 50.0
+min_premium_usd: 250.0
+margin_budget_usd: 1000.0
 contract_value_underlying: 0.001
 Fee Rate: 0.0100%
 Data Mode: reconstructed
@@ -15,38 +15,38 @@ Data Mode: reconstructed
 CAPITAL SUMMARY
 ------------------------------
 Initial Capital: $1,000.00
-Final Capital: $1,025.95
-Net P&L: $25.95
-Return: 2.60%
+Final Capital: $2,223.68
+Net P&L: $1,223.68
+Return: 122.37%
 
 TRADING STATISTICS
 ------------------------------
-Total Trades: 50
-Winning Trades: 37
-Losing Trades: 13
-Win Rate: 74.00%
-Profit Factor: 3.75
-Max Drawdown: $-2.74
-Average Trade P&L: $0.52
-Largest Win: $2.35
-Largest Loss: $-2.27
-Total Fees: $2.39
+Total Trades: 205
+Winning Trades: 106
+Losing Trades: 99
+Win Rate: 51.71%
+Profit Factor: 1.92
+Max Drawdown: $-163.12
+Average Trade P&L: $5.97
+Largest Win: $58.97
+Largest Loss: $-62.88
+Total Fees: $229.69
 
 TRADE DETAILS
 ------------------------------
-Trade 1: CALL Strike $90,900 Qty 2 P&L $1.02
-Trade 2: PUT Strike $89,100 Qty 3 P&L $1.09
-Trade 3: PUT Strike $90,900 Qty 3 P&L $-0.94
-Trade 4: CALL Strike $92,700 Qty 2 P&L $-0.42
-Trade 5: CALL Strike $96,900 Qty 2 P&L $0.89
-Trade 6: PUT Strike $88,200 Qty 3 P&L $0.20
-Trade 7: CALL Strike $90,000 Qty 2 P&L $1.24
-Trade 8: PUT Strike $86,400 Qty 3 P&L $1.72
-Trade 9: CALL Strike $90,000 Qty 2 P&L $1.00
-Trade 10: CALL Strike $68,250 Qty 3 P&L $0.46
-... and 40 more trades
+Trade 1: CALL Strike $89,100 Qty 54 P&L $-5.86
+Trade 2: PUT Strike $88,200 Qty 72 P&L $4.64
+Trade 3: CALL Strike $94,050 Qty 52 P&L $-4.56
+Trade 4: PUT Strike $92,150 Qty 69 P&L $-24.84
+Trade 5: CALL Strike $93,600 Qty 52 P&L $-4.96
+Trade 6: PUT Strike $90,000 Qty 71 P&L $-8.71
+Trade 7: CALL Strike $91,800 Qty 52 P&L $-16.37
+Trade 8: PUT Strike $90,000 Qty 71 P&L $-1.90
+Trade 9: CALL Strike $97,850 Qty 49 P&L $-6.59
+Trade 10: PUT Strike $88,200 Qty 72 P&L $-16.67
+... and 195 more trades
 
 EXECUTION INFO
 ------------------------------
-Run at: 2026-08-23T22:42:47.659783
-Data Range: 2026-01-03T00:30:00 to 2026-08-23T15:30:00
+Run at: 2026-08-24T20:44:17.804689
+Data Range: 2026-01-02T09:30:00 to 2026-08-23T21:30:00

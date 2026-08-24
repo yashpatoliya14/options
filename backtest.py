@@ -31,20 +31,19 @@ from exchange.simulated_broker import SimulatedBroker, ReconstructedOptionDataSo
 from exchange.delta_client import DeltaClient
 
 
-def fetch_underlying_candles(start_ts: int, end_ts: int, resolution: str = "3h") -> List[Candle]:
+def fetch_underlying_candles(start_ts: int, end_ts: int, resolution: str = "2h") -> List[Candle]:
     """
-    Pulls real historical underlying candles from Delta (this part IS fully
-    realistic regardless of data_mode -- underlying OHLCV history is
-    confirmed available). If '3h' isn't a supported native resolution,
-    aggregates from '1h' candles, 3-at-a-time, closing only on the 3rd.
+    Pulls real historical underlying candles from Delta natively (2h supported).
     """
     client = DeltaClient(CONFIG)
-
+    
+    # Extract duration in seconds
+    duration = 7200 if resolution == "2h" else 3600
+    
     def fetch_chunked(res: str) -> List[dict]:
-        # Keep requests comfortably below common exchange candle limits
-        # (typically 2,000 rows). A 90-day 1h window is 2,160 rows, so use
-        # 60-day chunks and deduplicate boundary candles.
-        chunk_seconds = 60 * 86400 if res == "1h" else 180 * 86400
+        # Exchange limit is typically 2000 candles per request.
+        # 100 days of 2h candles = 1200 candles.
+        chunk_seconds = 60 * 86400 if res == "1h" else 100 * 86400
         rows = []
         cursor = start_ts
         while cursor < end_ts:
@@ -55,16 +54,21 @@ def fetch_underlying_candles(start_ts: int, end_ts: int, resolution: str = "3h")
             cursor = chunk_end + 1
         return sorted({int(r["time"]): r for r in rows}.values(), key=lambda r: int(r["time"]))
 
-    # Based on diagnostic report, 3h resolution is not supported by Delta Exchange.
-    # Always use 1h aggregation for consistency.
-    from utils.candle_aggregator import aggregate_1h_to_3h
-    
-    raw_1h = fetch_chunked("1h")
-    if not raw_1h:
+    raw = fetch_chunked(resolution)
+    if not raw:
         return []
     
-    candles = aggregate_1h_to_3h(raw_1h)
-    print(f"Fetched {len(raw_1h)} 1H candles, aggregated to {len(candles)} 3H candles.")
+    candles = []
+    for r in raw:
+        candles.append(Candle(
+            timestamp=int(r["time"]) + duration,
+            open=float(r["open"]),
+            high=float(r["high"]),
+            low=float(r["low"]),
+            close=float(r["close"])
+        ))
+    
+    print(f"Fetched {len(candles)} {resolution} candles natively.")
     return candles
 
 
@@ -316,13 +320,14 @@ def print_beautiful_output(result: dict) -> None:
     console.print(Panel(summary_text, title="Backtest Summary", border_style="blue", expand=False))
 
 
-def run_year_backtest(year: int, initial_capital: float, data_mode: str = "reconstructed") -> dict:
+def run_year_backtest(year: int, initial_capital: float, cfg, data_mode: str = "reconstructed") -> dict:
     """
     Run backtest for a specific year.
     
     Args:
         year: Year to backtest (e.g., 2024, 2025, 2026)
         initial_capital: Initial capital in USD
+        cfg: The strategy configuration to use
         data_mode: 'reconstructed' or 'realistic'
         
     Returns:
@@ -349,7 +354,7 @@ def run_year_backtest(year: int, initial_capital: float, data_mode: str = "recon
     
     # Display fee information
     from utils.fee_calculator import FeeCalculator
-    fee_calc = FeeCalculator(CONFIG)
+    fee_calc = FeeCalculator(cfg)
     fee_rate = fee_calc.get_fee_rate(is_taker=True)
     console.print(f"[cyan]Fee Rate: {fee_rate*100:.4f}% (Taker)[/cyan]")
     console.print(f"[cyan]Fee Source: Delta Exchange API (from diagnostic report)[/cyan]")
@@ -365,15 +370,15 @@ def run_year_backtest(year: int, initial_capital: float, data_mode: str = "recon
     console.print(f"[green]Loaded {len(candles)} 3h candles for {year}.[/green]")
     
     # Run backtest
-    result = run_backtest(candles, data_mode, CONFIG, initial_capital)
+    result = run_backtest(candles, data_mode, cfg, initial_capital)
     
     # Save results
-    save_backtest_results(year, result, initial_capital, data_mode, fee_rate)
+    save_backtest_results(year, result, initial_capital, cfg, data_mode, fee_rate)
     
     return result
 
 
-def save_backtest_results(year: int, result: dict, initial_capital: float, 
+def save_backtest_results(year: int, result: dict, initial_capital: float, cfg,
                           data_mode: str, fee_rate: float):
     """
     Save backtest results to organized directory structure.
@@ -395,12 +400,12 @@ def save_backtest_results(year: int, result: dict, initial_capital: float,
         "fee_rate": fee_rate,
         "fee_source": "Delta Exchange API (from diagnostic report)",
         "strategy_parameters": {
-            "timeframe": CONFIG.timeframe,
-            "supertrend_atr_period": CONFIG.supertrend_atr_period,
-            "supertrend_multiplier": CONFIG.supertrend_multiplier,
-            "min_premium_usd": CONFIG.min_premium_usd,
-            "margin_budget_usd": CONFIG.margin_budget_usd,
-            "contract_value_underlying": CONFIG.contract_value_underlying,
+            "timeframe": cfg.timeframe,
+            "supertrend_atr_period": cfg.supertrend_atr_period,
+            "supertrend_multiplier": cfg.supertrend_multiplier,
+            "min_premium_usd": cfg.min_premium_usd,
+            "margin_budget_usd": cfg.margin_budget_usd,
+            "contract_value_underlying": cfg.contract_value_underlying,
         },
         "execution_timestamp": datetime.datetime.now().isoformat(),
         "data_range": {
@@ -520,7 +525,7 @@ def generate_text_report(year: int, result: dict, metadata: dict, filepath: str)
         f.write(f"Data Range: {metadata['data_range']['start']} to {metadata['data_range']['end']}\n")
 
 
-def compare_years(years: list, initial_capital: float, data_mode: str = "reconstructed"):
+def compare_years(years: list, initial_capital: float, cfg, data_mode: str = "reconstructed"):
     """
     Compare backtest results across multiple years.
     """
@@ -529,7 +534,7 @@ def compare_years(years: list, initial_capital: float, data_mode: str = "reconst
     results = {}
     for year in years:
         console.print(f"\n[cyan]Running {year} backtest...[/cyan]")
-        result = run_year_backtest(year, initial_capital, data_mode)
+        result = run_year_backtest(year, initial_capital, cfg, data_mode)
         results[year] = result
         
     # Display comparison table
@@ -600,9 +605,6 @@ def main():
                         help="Override MIN_PREMIUM for this run only.")
     args = parser.parse_args()
     
-    # Handle min-premium override
-    cfg = CONFIG if args.min_premium is None else replace(CONFIG, min_premium_usd=args.min_premium)
-    
     # Get initial capital interactively if not provided
     initial_capital = args.capital
     if initial_capital is None:
@@ -612,6 +614,10 @@ def main():
         except (ValueError, EOFError):
             console.print("[red]Invalid capital input. Using default: $10,000[/red]")
             initial_capital = 10000.0
+            
+    # Handle overrides including the margin_budget_usd fixed to initial_capital
+    cfg = CONFIG if args.min_premium is None else replace(CONFIG, min_premium_usd=args.min_premium)
+    cfg = replace(cfg, margin_budget_usd=initial_capital)
     
     # Determine which years to backtest
     if args.year:
@@ -662,7 +668,7 @@ def main():
     
     # Run backtests
     if len(years) == 1:
-        result = run_year_backtest(years[0], initial_capital, args.mode)
+        result = run_year_backtest(years[0], initial_capital, cfg, args.mode)
         print_beautiful_output(result)
         
         if result["summary"]["total_trades"] == 0:
@@ -674,7 +680,7 @@ def main():
                     f"Try lowering --min-premium for reconstructed-mode tests.[/yellow]"
                 )
     else:
-        compare_years(years, initial_capital, args.mode)
+        compare_years(years, initial_capital, cfg, args.mode)
 
 
 if __name__ == "__main__":

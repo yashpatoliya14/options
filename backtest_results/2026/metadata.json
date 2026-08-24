@@ -5,16 +5,16 @@
   "fee_rate": 0.0001,
   "fee_source": "Delta Exchange API (from diagnostic report)",
   "strategy_parameters": {
-    "timeframe": "3h",
+    "timeframe": "2h",
     "supertrend_atr_period": 16,
     "supertrend_multiplier": 1.5,
-    "min_premium_usd": 300.0,
-    "margin_budget_usd": 50.0,
+    "min_premium_usd": 250.0,
+    "margin_budget_usd": 1000.0,
     "contract_value_underlying": 0.001
   },
-  "execution_timestamp": "2026-08-23T22:42:47.659783",
+  "execution_timestamp": "2026-08-24T20:44:17.804689",
   "data_range": {
-    "start": "2026-01-03T00:30:00",
-    "end": "2026-08-23T15:30:00"
+    "start": "2026-01-02T09:30:00",
+    "end": "2026-08-23T21:30:00"
   }
 }

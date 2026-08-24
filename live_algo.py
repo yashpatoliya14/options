@@ -77,17 +77,34 @@ class PaperBroker:
         return []  # paper mode has no real exchange state to reconcile against
 
 
+def fetch_timeframe_candles(client: DeltaClient, symbol: str, start_ts: int, end_ts: int) -> List[Candle]:
+    res = CONFIG.timeframe
+    duration = 7200 if res == "2h" else 3600
+    raw = client.get_historical_candles(symbol, res, start_ts, end_ts)
+    if not raw:
+        return []
+    candles = []
+    for r in sorted(raw, key=lambda x: int(x["time"])):
+        candles.append(Candle(
+            timestamp=int(r["time"]) + duration,
+            open=float(r["open"]),
+            high=float(r["high"]),
+            low=float(r["low"]),
+            close=float(r["close"])
+        ))
+    return candles
+
+
 def build_candle_stream_poller(client: DeltaClient, last_seen_ts: Optional[int]):
     """
-    Polls Delta for the most recently CLOSED 3h candle and yields it once,
+    Polls Delta for the most recently CLOSED candle and yields it once,
     when it's new. Never yields a still-forming candle.
     """
-    from utils.candle_aggregator import fetch_3h_candles
-    
     def poll() -> Optional[Candle]:
         now = int(time.time())
-        # Fetch 3H candles for the last 9 hours (3 complete 3H candles)
-        candles = fetch_3h_candles(client, CONFIG.underlying_symbol, now - 9 * 3600, now)
+        duration = 7200 if CONFIG.timeframe == "2h" else 3600
+        # Fetch candles for the last 3 periods
+        candles = fetch_timeframe_candles(client, CONFIG.underlying_symbol, now - 3 * duration, now)
         
         if not candles:
             return None
@@ -164,10 +181,38 @@ def reconcile_startup_state(store: StateStore, cfg, real_client: DeltaClient) ->
     )
 
 
+def warm_up_engine(client: DeltaClient, engine: StrategyEngine):
+    """
+    Fetch enough historical candles to fully warm up the Supertrend indicator
+    (e.g., 200 candles) so the bot is ready to evaluate signals
+    immediately instead of waiting 48+ hours for the indicator to initialize.
+    """
+    now = int(time.time())
+    duration = 7200 if CONFIG.timeframe == "2h" else 3600
+    start_ts = now - (200 * duration)
+    
+    try:
+        candles = fetch_timeframe_candles(client, CONFIG.underlying_symbol, start_ts, now)
+        if not candles:
+            return
+            
+        # We only want to feed CLOSED candles to warm up the supertrend
+        if now < candles[-1].timestamp:
+            candles = candles[:-1]
+            
+        log.info(f"Warming up Supertrend with {len(candles)} historical {CONFIG.timeframe} candles...")
+        for candle in candles:
+            engine.supertrend.update(candle)
+    except Exception as e:
+        log.error(f"Failed to warm up engine: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--poll-seconds", type=int, default=60,
-                         help="how often to check for a newly closed 3h candle")
+                         help="how often to check for a newly closed candle")
+    parser.add_argument("--demo-trade", action="store_true", 
+                         help="Place and immediately close a 1-lot order to confirm exchange connectivity")
     args = parser.parse_args()
 
     mode = CONFIG.trading_mode
@@ -176,6 +221,39 @@ def main():
     store = StateStore(CONFIG.sqlite_path)
     notifier = TelegramNotifier(CONFIG)
     real_client = DeltaClient(CONFIG)
+
+    if args.demo_trade:
+        if mode != "live":
+            log.error("Demo trade requires TRADING_MODE=live")
+            return
+        log.info("--- DEMO TRADE MODE ---")
+        expiries = real_client.get_available_expiries(CONFIG.underlying_asset)
+        if not expiries:
+            log.error("Demo trade failed: No expiries found.")
+            return
+        chain = real_client.get_option_chain(CONFIG.underlying_asset, expiries[0])
+        if not chain:
+            log.error("Demo trade failed: No options found.")
+            return
+        # Pick the first put
+        quote = next((q for q in chain if q.option_type == "put"), None)
+        if not quote:
+            log.error("Demo trade failed: No puts found.")
+            return
+        
+        log.info(f"Placing demo SELL order for 1 lot of {quote.symbol}...")
+        order = real_client.place_sell_order(quote, 1)
+        if not order.success:
+            log.error(f"Demo trade sell failed: {order.message}")
+            return
+        log.info(f"Demo SELL success. Order ID: {order.order_id}. Now closing...")
+        pos = Position(symbol=quote.symbol, option_type=quote.option_type, strike=quote.strike, expiry=quote.expiry, side="sell", quantity=1, entry_premium=order.filled_premium or quote.premium, entry_timestamp=int(time.time()), strategy_direction="")
+        close_order = real_client.close_position(pos)
+        if not close_order.success:
+            log.error(f"Demo trade close failed: {close_order.message}. WARNING: You may have an open 1-lot position!")
+            return
+        log.info(f"Demo CLOSE success. Order ID: {close_order.order_id}. Exchange connectivity confirmed!")
+        return
 
     existing_position = None
     broker = None
@@ -238,6 +316,7 @@ def main():
             log.exception("Failed while handling engine event %s", e.kind)
 
     engine = StrategyEngine(CONFIG, broker, on_event, existing_position=existing_position)
+    warm_up_engine(real_client, engine)
 
     last_ts = store.get_state("last_candle_timestamp")
     poller = build_candle_stream_poller(real_client, last_ts)
@@ -245,7 +324,7 @@ def main():
     startup_msg = f"Live algo started in {mode.upper()} mode.\nAsset: {CONFIG.underlying_symbol}"
     log.info(startup_msg)
     notifier.status(startup_msg)
-    log.info("Entering poll loop. Waiting for closed 3h candles...")
+    log.info(f"Entering poll loop. Waiting for closed {CONFIG.timeframe} candles...")
     while True:
         try:
             candle = poller()
