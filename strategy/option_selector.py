@@ -29,11 +29,12 @@ def select_strike(
     supertrend_value: float,
     spot_price: float,
     option_type: str,
+    min_premium: float = 0.0,
 ) -> Optional[OptionQuote]:
     """
     From a list of quotes (already filtered to one expiry), pick the one of
-    `option_type` that is Out-of-The-Money (OTM) and whose strike is closest to
-    the Supertrend line (`supertrend_value`).
+    `option_type` that is Out-of-The-Money (OTM), has premium >= min_premium, 
+    and whose strike is closest to the Supertrend line (`supertrend_value`).
     
     For a PUT: OTM means Strike < Spot Price.
     For a CALL: OTM means Strike > Spot Price.
@@ -44,6 +45,8 @@ def select_strike(
         
     otm_candidates = []
     for q in candidates:
+        if q.premium < min_premium:
+            continue
         if option_type == "put" and q.strike < spot_price:
             otm_candidates.append(q)
         elif option_type == "call" and q.strike > spot_price:
@@ -52,6 +55,12 @@ def select_strike(
     if not otm_candidates:
         return None
         
+    # We want it to be close to supertrend, but not infinitely far. 
+    # Let's say it can't be further than 5% away from supertrend_value.
+    valid_candidates = [q for q in otm_candidates if abs(q.strike - supertrend_value) <= (supertrend_value * 0.05)]
+    if not valid_candidates:
+        return None
+        
     # Select the OTM strike closest to the Supertrend value
-    return min(otm_candidates, key=lambda q: abs(q.strike - supertrend_value))
+    return min(valid_candidates, key=lambda q: abs(q.strike - supertrend_value))
 

@@ -44,17 +44,11 @@ def select_expiry_and_strike(
     best_expiry_seen: Optional[str] = None
 
     for i, expiry in enumerate(expiries):
-        if i == 0:
-            label = "today"
-        elif i == 1:
-            label = "tomorrow"
-        else:
-            # Spec explicitly states: Do NOT walk further into future expiries.
-            # If today and tomorrow don't have enough premium, we reject the trade.
-            break
-
+        label = "today" if i == 0 else "tomorrow" if i == 1 else f"day_{i}"
+        
         quotes = broker.get_option_chain(underlying, expiry, timestamp=as_of_timestamp)
-        best = select_strike(quotes, supertrend_value, spot_price, option_type)
+        # Pass min_premium down so we pick the closest strike that ACTUALLY meets the minimum premium.
+        best = select_strike(quotes, supertrend_value, spot_price, option_type, min_premium=min_premium)
         if best is None:
             continue
             
@@ -62,8 +56,7 @@ def select_expiry_and_strike(
             best_premium_seen = best.premium
             best_expiry_seen = label
             
-        if best.premium >= min_premium:
-            return ExpirySelectionResult(best, label)
+        return ExpirySelectionResult(best, label)
 
     return ExpirySelectionResult(
         None,
