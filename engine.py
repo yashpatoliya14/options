@@ -63,6 +63,7 @@ class StrategyEngine:
         self._last_trend: Optional[Trend] = None
         self._active_signal: Optional[str] = None
         self._flat_reason: Optional[str] = None
+        self._manual_sl_threshold: Optional[float] = None
         
         if existing_position is not None:
             self._last_trend = (
@@ -131,7 +132,10 @@ class StrategyEngine:
         if self.current_position is None:
             return False
             
-        sl_threshold = self.current_position.entry_premium * (1 + self.cfg.stop_loss_percent / 100.0)
+        if self._manual_sl_threshold is not None:
+            sl_threshold = self._manual_sl_threshold
+        else:
+            sl_threshold = self.current_position.entry_premium * (1 + self.cfg.stop_loss_percent / 100.0)
         
         # We sold the option, so if premium goes UP above the threshold, we lose and SL triggers.
         if current_premium >= sl_threshold:
@@ -278,5 +282,6 @@ class StrategyEngine:
             },
         ))
         self.current_position = None
+        self._manual_sl_threshold = None
         self._flat_reason = reason
         return True

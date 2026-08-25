@@ -11,14 +11,31 @@ class TelegramNotifier:
         self.cfg = cfg
         self.enabled = cfg.telegram_enabled and bool(cfg.telegram_bot_token) and bool(cfg.telegram_chat_id)
 
-    def _send(self, text: str) -> None:
+    def _send(self, text: str, parse_mode: str = None, reply_markup: dict = None) -> None:
         if not self.enabled:
             return
         url = f"https://api.telegram.org/bot{self.cfg.telegram_bot_token}/sendMessage"
+        payload = {"chat_id": self.cfg.telegram_chat_id, "text": text}
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
         try:
-            requests.post(url, data={"chat_id": self.cfg.telegram_chat_id, "text": text}, timeout=10)
+            requests.post(url, json=payload, timeout=10)
         except Exception:
             # Notification failures must never crash the trading loop.
+            pass
+            
+    def answer_callback(self, callback_query_id: str, text: str = "") -> None:
+        if not self.enabled:
+            return
+        url = f"https://api.telegram.org/bot{self.cfg.telegram_bot_token}/answerCallbackQuery"
+        payload = {"callback_query_id": callback_query_id}
+        if text:
+            payload["text"] = text
+        try:
+            requests.post(url, json=payload, timeout=10)
+        except Exception:
             pass
 
     def signal(self, trend: str, underlying_price: float, supertrend_value: float, cfg: StrategyConfig) -> None:
@@ -60,5 +77,19 @@ class TelegramNotifier:
     def error(self, context: str, message: str) -> None:
         self._send(f"⚠️ ERROR\n\nContext: {context}\nMessage: {message}")
 
-    def status(self, message: str) -> None:
-        self._send(f"🤖 BOT UPDATE\n\n{message}")
+    def status(self, message: str, parse_mode: str = None, reply_markup: dict = None) -> None:
+        self._send(f"🤖 BOT UPDATE\n\n{message}", parse_mode=parse_mode, reply_markup=reply_markup)
+
+    def get_updates(self) -> list:
+        """Fetch latest telegram messages (without advancing offset)."""
+        if not self.enabled:
+            return []
+        url = f"https://api.telegram.org/bot{self.cfg.telegram_bot_token}/getUpdates"
+        try:
+            r = requests.get(url, params={"allowed_updates": '["message", "callback_query"]'}, timeout=10)
+            res = r.json()
+            if res and res.get("ok"):
+                return res.get("result", [])
+        except Exception:
+            pass
+        return []
