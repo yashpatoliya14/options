@@ -332,7 +332,18 @@ def main():
     log.info(startup_msg)
     notifier.status(startup_msg)
     log.info(f"Entering poll loop. Waiting for closed {CONFIG.timeframe} candles...")
+    
+    last_status_sent = time.time()
+    
     while True:
+        # Send 12-hour status update
+        if time.time() - last_status_sent >= 12 * 3600:
+            try:
+                notifier.status(startup_msg)
+            except Exception:
+                pass
+            last_status_sent = time.time()
+
         try:
             candle = poller()
             if candle is not None:
