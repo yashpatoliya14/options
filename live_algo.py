@@ -358,6 +358,8 @@ def main():
                         parts = ["close", "o1"]
                     elif cb_data == "open_o1":
                         parts = ["open", "o1"]
+                    elif cb_data == "clear_o1":
+                        parts = ["clear", "o1"]
                     elif cb_data == "sl_o1":
                         notifier.status("To update SL for O1, please send the command:\n`/sl O1 <price>`", parse_mode="Markdown")
                 elif msg_text:
@@ -382,6 +384,13 @@ def main():
                 elif len(parts) >= 2 and parts[0] == "open" and parts[1] == "o1":
                     force_open = True
                     notifier.status("⏳ Command received: Queued OPEN for O1 (will execute on next poll).")
+                elif len(parts) >= 2 and parts[0] == "clear" and parts[1] == "o1":
+                    if engine.current_position:
+                        engine.current_position = None
+                        store.record_trade_exit(int(time.time()), 0.0, "manual_state_clear")
+                        notifier.status("✅ Local state cleared. Bot now thinks position is closed.")
+                    else:
+                        notifier.status("❌ Already clear.")
 
         # Send 12-hour status update
         if time.time() - last_status_sent >= 12 * 3600:
@@ -402,6 +411,10 @@ def main():
                 keyboard.append([
                     {"text": "Close O1", "callback_data": "close_o1"},
                     {"text": "Update SL O1", "callback_data": "sl_o1"}
+                ])
+                keyboard.append([
+                    {"text": "Clear State (If closed)", "callback_data": "clear_o1"},
+                    {"text": "Force Reopen", "callback_data": "open_o1"}
                 ])
             else:
                 lines.append(f"🔸 `[O1]` None")
