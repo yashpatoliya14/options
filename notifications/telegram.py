@@ -80,13 +80,16 @@ class TelegramNotifier:
     def status(self, message: str, parse_mode: str = None, reply_markup: dict = None) -> None:
         self._send(f"🤖 BOT UPDATE\n\n{message}", parse_mode=parse_mode, reply_markup=reply_markup)
 
-    def get_updates(self) -> list:
-        """Fetch latest telegram messages (without advancing offset)."""
+    def get_updates(self, offset: int = None) -> list:
+        """Fetch latest telegram messages."""
         if not self.enabled:
             return []
         url = f"https://api.telegram.org/bot{self.cfg.telegram_bot_token}/getUpdates"
+        params = {"allowed_updates": '["message", "callback_query"]'}
+        if offset is not None:
+            params["offset"] = offset
         try:
-            r = requests.get(url, params={"allowed_updates": '["message", "callback_query"]'}, timeout=10)
+            r = requests.get(url, params=params, timeout=10)
             res = r.json()
             if res and res.get("ok"):
                 return res.get("result", [])

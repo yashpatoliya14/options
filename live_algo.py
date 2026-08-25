@@ -335,13 +335,23 @@ def main():
     
     last_status_sent = time.time()
     last_6h_status_sent = time.time() - (6 * 3600) + 60
+    
+    # Flush old updates so they don't trigger on restart
     last_processed_update_id = 0
+    try:
+        flush_updates = notifier.get_updates(offset=-1)
+        if flush_updates:
+            last_processed_update_id = flush_updates[0]["update_id"]
+    except Exception:
+        pass
+        
     force_open = False
     force_close = False
     
     while True:
-        # Telegram updates
-        updates = notifier.get_updates()
+        # Telegram updates (pass offset to confirm processed messages)
+        req_offset = last_processed_update_id + 1 if last_processed_update_id > 0 else None
+        updates = notifier.get_updates(offset=req_offset)
         for update in updates:
             update_id = update.get("update_id", 0)
             if update_id > last_processed_update_id:
