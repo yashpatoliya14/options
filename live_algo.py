@@ -455,8 +455,10 @@ def main():
                 trend = engine._last_trend if engine._last_trend else Trend.BULLISH
                 try:
                     spot_px = float(real_client.get_ticker(CONFIG.underlying_symbol).get("mark_price", 0))
-                except:
-                    spot_px = engine.current_position.underlying_price if engine.current_position else 0
+                except Exception as e:
+                    log.error(f"Failed to fetch ticker for force_open: {e}")
+                    # Fallback to the last known supertrend reference price
+                    spot_px = engine.supertrend.points[-1].reference_price if engine.supertrend.points else 0
                     
                 point = SupertrendPoint(
                     timestamp=int(time.time()),

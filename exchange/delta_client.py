@@ -113,6 +113,11 @@ class DeltaClient(Broker):
         data = self._get("/v2/products")
         return data.get("result", [])
 
+    def get_ticker(self, symbol: str) -> dict:
+        """Fetch current ticker for the symbol."""
+        data = self._get(f"/v2/tickers/{symbol}")
+        return data.get("result", {})
+
     # ---------- Broker interface ----------
 
     def get_available_expiries(self, underlying: str, as_of_timestamp: Optional[int] = None) -> List[str]:
