@@ -263,7 +263,15 @@ class DeltaClient(Broker):
             if size == 0:
                 continue
             symbol = p.get("product_symbol", "")
+            
+            # Filter out non-option positions (like BTCUSD perpetuals)
+            if not (symbol.startswith("C-") or symbol.startswith("P-")):
+                continue
+                
             option_type, strike, expiry = self._parse_option_symbol(symbol)
+            if strike == 0.0:
+                continue
+                
             positions.append(Position(
                 symbol=symbol,
                 option_type=option_type,
@@ -279,12 +287,22 @@ class DeltaClient(Broker):
 
     @staticmethod
     def _parse_option_symbol(symbol: str):
-        """Parse common Delta option symbols: C-BTC-70000-2026-08-23."""
-        match = re.match(r"^(?P<kind>[CP])-[^-]+-(?P<strike>[0-9]+(?:\.[0-9]+)?)-(?P<date>\d{4}-\d{2}-\d{2})$", symbol)
+        """Parse common Delta option symbols: C-BTC-70000-2026-08-23 or C-BTC-70000-250826."""
+        # Match kind (C/P), underlying, strike, and date (either YYYY-MM-DD or DDMMYY or similar)
+        match = re.match(r"^(?P<kind>[CP])-[^-]+-(?P<strike>[0-9]+(?:\.[0-9]+)?)-(?P<date>.+)$", symbol)
         if not match:
             return ("put" if symbol.startswith("P-") else "call", 0.0, "")
+        
+        date_str = match.group("date")
+        # Try to normalize DDMMYY to YYYY-MM-DD if needed, or just return it as is.
+        # live_algo expects YYYY-MM-DD for its own tracking but delta_client can use what it wants
+        # if we just return date_str.
+        if re.match(r"^\d{6}$", date_str):
+            # DDMMYY -> 20YY-MM-DD (assuming 20xx)
+            date_str = f"20{date_str[4:6]}-{date_str[2:4]}-{date_str[0:2]}"
+            
         return (
             "put" if match.group("kind") == "P" else "call",
             float(match.group("strike")),
-            match.group("date"),
+            date_str,
         )

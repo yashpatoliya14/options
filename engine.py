@@ -227,6 +227,7 @@ class StrategyEngine:
             timestamp=point.timestamp,
             payload={
                 "signal": point.trend.value,
+                "symbol": result.quote.symbol,
                 "option_type": result.quote.option_type,
                 "strike": result.quote.strike,
                 "expiry": result.quote.expiry,
@@ -235,6 +236,7 @@ class StrategyEngine:
                 "quantity": order.quantity,
                 "underlying_price": point.reference_price,
                 "margin_per_lot": sizing.estimated_margin_per_lot,
+                "order_id": getattr(order, "order_id", None),
             },
         ))
 
@@ -244,12 +246,19 @@ class StrategyEngine:
             return True
         order = self.broker.close_position(pos)
         if not order.success:
-            self.on_event(EngineEvent(
-                kind="error",
-                timestamp=timestamp,
-                payload={"reason": order.message, "context": "close_position"},
-            ))
-            return False
+            if "no_position_for_reduce_only" in str(order.message):
+                # The position was already closed on the exchange (e.g. manually)
+                order.success = True
+                order.filled_premium = 0.0
+                order.order_id = "closed_manually"
+                reason = "reconciled_missing_on_exchange"
+            else:
+                self.on_event(EngineEvent(
+                    kind="error",
+                    timestamp=timestamp,
+                    payload={"reason": order.message, "context": "close_position"},
+                ))
+                return False
         exit_premium = order.filled_premium if order.filled_premium is not None else None
 
         self.on_event(EngineEvent(
@@ -265,6 +274,7 @@ class StrategyEngine:
                 "entry_premium": pos.entry_premium,
                 "exit_premium": exit_premium,
                 "entry_timestamp": pos.entry_timestamp,
+                "order_id": getattr(order, "order_id", None),
             },
         ))
         self.current_position = None

@@ -290,7 +290,10 @@ def main():
                     e.timestamp, e.payload["signal"], e.payload["option_type"], e.payload["strike"],
                     e.payload["expiry"], e.payload["quantity"], e.payload["premium"],
                 )
-                store.record_order(e.timestamp, None, "sell", "", e.payload["quantity"], e.payload["premium"], True, "entry")
+                store.record_order(
+                    e.timestamp, e.payload.get("order_id"), "sell", e.payload.get("symbol", ""),
+                    e.payload["quantity"], e.payload["premium"], True, "entry"
+                )
                 notifier.trade_entry(
                     e.payload["signal"], e.payload["option_type"], e.payload["strike"], e.payload["expiry"],
                     e.payload["premium"], e.payload["underlying_price"],
@@ -304,6 +307,10 @@ def main():
                 fees = (entry_premium + exit_premium) * qty * (CONFIG.fee_pct / 100.0)
                 net = gross - fees
                 store.record_trade_exit(e.timestamp, exit_premium, e.payload["reason"])
+                store.record_order(
+                    e.timestamp, e.payload.get("order_id"), "buy", e.payload.get("symbol", ""),
+                    qty, exit_premium, True, e.payload["reason"]
+                )
                 notifier.trade_exit(e.payload["reason"], entry_premium, exit_premium, gross, fees, net)
                 log.info(f"TRADE EXIT: {e.payload} net_pnl={net:.2f}")
             elif e.kind == "trade_skipped":
