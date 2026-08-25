@@ -209,7 +209,7 @@ def warm_up_engine(client: DeltaClient, engine: StrategyEngine):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--poll-seconds", type=int, default=60,
+    parser.add_argument("--poll-seconds", type=int, default=10,
                          help="how often to check for a newly closed candle")
     parser.add_argument("--demo-trade", action="store_true", 
                          help="Place and immediately close a 1-lot order to confirm exchange connectivity")
@@ -360,6 +360,8 @@ def main():
                         parts = ["open", "o1"]
                     elif cb_data == "clear_o1":
                         parts = ["clear", "o1"]
+                    elif cb_data == "cancel_o1":
+                        parts = ["cancel", "o1"]
                     elif cb_data == "sl_o1":
                         notifier.status("To update SL for O1, please send the command:\n`/sl O1 <price>`", parse_mode="Markdown")
                 elif msg_text:
@@ -391,6 +393,10 @@ def main():
                         notifier.status("✅ Local state cleared. Bot now thinks position is closed.")
                     else:
                         notifier.status("❌ Already clear.")
+                elif len(parts) >= 2 and parts[0] == "cancel" and parts[1] == "o1":
+                    force_close = False
+                    force_open = False
+                    notifier.status("✅ Cleared any pending manual OPEN/CLOSE commands for O1.")
 
         # Send 12-hour status update
         if time.time() - last_status_sent >= 12 * 3600:
@@ -416,10 +422,16 @@ def main():
                     {"text": "Clear State (If closed)", "callback_data": "clear_o1"},
                     {"text": "Force Reopen", "callback_data": "open_o1"}
                 ])
+                keyboard.append([
+                    {"text": "Cancel Queue O1", "callback_data": "cancel_o1"}
+                ])
             else:
                 lines.append(f"🔸 `[O1]` None")
                 keyboard.append([
                     {"text": "Place Again O1", "callback_data": "open_o1"}
+                ])
+                keyboard.append([
+                    {"text": "Cancel Queue O1", "callback_data": "cancel_o1"}
                 ])
                 
             reply_markup = {"inline_keyboard": keyboard}
@@ -430,31 +442,36 @@ def main():
             last_6h_status_sent = time.time()
 
         try:
+            if force_close:
+                if engine.current_position:
+                    engine._close_current_position(int(time.time()), reason="manual_close")
+                    notifier.status("✅ Manual Close Executed for O1")
+                else:
+                    notifier.status("❌ Failed to Close: No active position for O1")
+                force_close = False
+                
+            if force_open:
+                from strategy.supertrend import SupertrendPoint, Trend
+                trend = engine._last_trend if engine._last_trend else Trend.BULLISH
+                try:
+                    spot_px = float(real_client.get_ticker(CONFIG.underlying_symbol).get("mark_price", 0))
+                except:
+                    spot_px = engine.current_position.underlying_price if engine.current_position else 0
+                    
+                point = SupertrendPoint(
+                    timestamp=int(time.time()),
+                    trend=trend,
+                    value=spot_px * 0.9,
+                    reference_price=spot_px,
+                    signal_change=True
+                )
+                engine._attempt_open(point)
+                force_open = False
+
             candle = poller()
             if candle is not None:
                 log.info(f"New closed candle: t={candle.timestamp} close={candle.close}")
                 
-                if force_close:
-                    if engine.current_position:
-                        engine._close_current_position(candle.timestamp, reason="manual_close")
-                        notifier.status("✅ Manual Close Executed for O1")
-                    else:
-                        notifier.status("❌ Failed to Close: No active position for O1")
-                    force_close = False
-                    
-                if force_open:
-                    from strategy.supertrend import SupertrendPoint, Trend
-                    trend = engine._last_trend if engine._last_trend else Trend.BULLISH
-                    point = SupertrendPoint(
-                        timestamp=candle.timestamp,
-                        trend=trend,
-                        value=candle.close * 0.9,
-                        reference_price=candle.close,
-                        signal_change=True
-                    )
-                    engine._attempt_open(point)
-                    force_open = False
-                    
                 if hasattr(broker, "estimate_margin_per_lot"):
                     pass  # broker already carries CONFIG-scoped clock-free lookups for live mode
                 engine.on_candle_close(candle)
