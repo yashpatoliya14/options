@@ -56,8 +56,8 @@ def select_strike(
         return None
         
     # We want it to be close to supertrend, but not infinitely far. 
-    # Let's say it can't be further than 5% away from supertrend_value.
-    valid_candidates = [q for q in otm_candidates if abs(q.strike - supertrend_value) <= (supertrend_value * 0.05)]
+    # Increased to 15% to prevent skipped trades in high volatility.
+    valid_candidates = [q for q in otm_candidates if abs(q.strike - supertrend_value) <= (supertrend_value * 0.15)]
     if not valid_candidates:
         return None
         

@@ -15,38 +15,38 @@ Data Mode: reconstructed
 CAPITAL SUMMARY
 ------------------------------
 Initial Capital: $1,000.00
-Final Capital: $2,223.68
-Net P&L: $1,223.68
-Return: 122.37%
+Final Capital: $3,177.56
+Net P&L: $2,177.56
+Return: 217.76%
 
 TRADING STATISTICS
 ------------------------------
-Total Trades: 205
-Winning Trades: 106
-Losing Trades: 99
-Win Rate: 51.71%
-Profit Factor: 1.92
-Max Drawdown: $-163.12
-Average Trade P&L: $5.97
+Total Trades: 291
+Winning Trades: 202
+Losing Trades: 89
+Win Rate: 69.42%
+Profit Factor: 2.05
+Max Drawdown: $-382.83
+Average Trade P&L: $7.48
 Largest Win: $58.97
-Largest Loss: $-62.88
-Total Fees: $229.69
+Largest Loss: $-123.90
+Total Fees: $320.51
 
 TRADE DETAILS
 ------------------------------
 Trade 1: CALL Strike $89,100 Qty 54 P&L $-5.86
-Trade 2: PUT Strike $88,200 Qty 72 P&L $4.64
-Trade 3: CALL Strike $94,050 Qty 52 P&L $-4.56
-Trade 4: PUT Strike $92,150 Qty 69 P&L $-24.84
-Trade 5: CALL Strike $93,600 Qty 52 P&L $-4.96
-Trade 6: PUT Strike $90,000 Qty 71 P&L $-8.71
-Trade 7: CALL Strike $91,800 Qty 52 P&L $-16.37
-Trade 8: PUT Strike $90,000 Qty 71 P&L $-1.90
-Trade 9: CALL Strike $97,850 Qty 49 P&L $-6.59
-Trade 10: PUT Strike $88,200 Qty 72 P&L $-16.67
-... and 195 more trades
+Trade 2: PUT Strike $89,100 Qty 72 P&L $4.95
+Trade 3: PUT Strike $89,100 Qty 73 P&L $1.26
+Trade 4: PUT Strike $89,100 Qty 73 P&L $9.62
+Trade 5: PUT Strike $89,100 Qty 69 P&L $45.08
+Trade 6: PUT Strike $89,100 Qty 70 P&L $57.05
+Trade 7: PUT Strike $90,900 Qty 71 P&L $4.40
+Trade 8: PUT Strike $90,900 Qty 72 P&L $9.02
+Trade 9: PUT Strike $90,900 Qty 68 P&L $57.47
+Trade 10: PUT Strike $93,100 Qty 69 P&L $-9.67
+... and 281 more trades
 
 EXECUTION INFO
 ------------------------------
-Run at: 2026-08-24T20:44:17.804689
-Data Range: 2026-01-02T09:30:00 to 2026-08-23T21:30:00
+Run at: 2026-08-27T22:39:56.196703
+Data Range: 2026-01-02T09:30:00 to 2026-08-27T23:30:00

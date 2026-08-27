@@ -12,9 +12,9 @@
     "margin_budget_usd": 1000.0,
     "contract_value_underlying": 0.001
   },
-  "execution_timestamp": "2026-08-24T20:44:17.804689",
+  "execution_timestamp": "2026-08-27T22:39:56.196703",
   "data_range": {
     "start": "2026-01-02T09:30:00",
-    "end": "2026-08-23T21:30:00"
+    "end": "2026-08-27T23:30:00"
   }
 }

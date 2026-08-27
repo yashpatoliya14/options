@@ -41,6 +41,14 @@ class EngineEvent:
     payload: dict = field(default_factory=dict)
 
 
+def _timeframe_seconds(tf: str) -> int:
+    tf = tf.strip().lower()
+    if tf.endswith("h"): return int(tf[:-1]) * 3600
+    elif tf.endswith("m"): return int(tf[:-1]) * 60
+    elif tf.endswith("d"): return int(tf[:-1]) * 86400
+    return 86400
+
+
 class StrategyEngine:
     def __init__(
         self,
@@ -57,6 +65,16 @@ class StrategyEngine:
             multiplier=cfg.supertrend_multiplier,
         )
         self.risk_manager = RiskManager(cfg, broker)
+        
+        # HTF tracking
+        self.htf_supertrend = SupertrendCalculator(
+            atr_period=cfg.supertrend_atr_period,
+            multiplier=cfg.supertrend_multiplier,
+        )
+        self.htf_duration = _timeframe_seconds(getattr(cfg, 'htf_timeframe', '1d'))
+        self._current_htf_candle: Optional[Candle] = None
+        self._htf_trend_value: Optional[str] = None
+        
         # Restored on startup by live_algo.py after reconciling with the exchange
         # (spec section 14: duplicate protection across restarts).
         self.current_position: Optional[Position] = existing_position
@@ -64,6 +82,7 @@ class StrategyEngine:
         self._active_signal: Optional[str] = None
         self._flat_reason: Optional[str] = None
         self._manual_sl_threshold: Optional[float] = None
+        self._lowest_premium_seen: Optional[float] = None
         
         if existing_position is not None:
             self._last_trend = (
@@ -94,12 +113,37 @@ class StrategyEngine:
                 payload={"reason": str(e), "context": "check_expirations"},
             ))
 
-    def on_candle_close(self, candle: Candle) -> Optional[SupertrendPoint]:
+    def on_candle_close(self, candle: Candle, htf_trend: Optional[str] = None) -> Optional[SupertrendPoint]:
         """
         Feed exactly one CLOSED candle. Never call this with a forming/live
         candle -- the spec requires signals only on confirmed candle closes.
         """
         self._check_expirations(candle.timestamp)
+        
+        # Aggregate HTF Candle
+        bucket_start = ((candle.timestamp - 1) // self.htf_duration) * self.htf_duration
+        bucket_end = bucket_start + self.htf_duration
+        
+        if self._current_htf_candle is None or self._current_htf_candle.timestamp != bucket_end:
+            if self._current_htf_candle is not None:
+                htf_point = self.htf_supertrend.update(self._current_htf_candle)
+                if htf_point:
+                    self._htf_trend_value = htf_point.trend.value
+            
+            self._current_htf_candle = Candle(
+                timestamp=bucket_end,
+                open=candle.open,
+                high=candle.high,
+                low=candle.low,
+                close=candle.close
+            )
+        else:
+            self._current_htf_candle.high = max(self._current_htf_candle.high, candle.high)
+            self._current_htf_candle.low = min(self._current_htf_candle.low, candle.low)
+            self._current_htf_candle.close = candle.close
+            
+        # Use provided htf_trend (from args) or our internally tracked one
+        effective_htf = htf_trend if htf_trend is not None else self._htf_trend_value
         
         point = self.supertrend.update(candle)
         if point is None:
@@ -113,6 +157,7 @@ class StrategyEngine:
                 "reference_price": point.reference_price,
                 "signal_change": point.signal_change,
                 "supertrend_value": point.value,
+                "htf_trend": effective_htf,
             },
         ))
 
@@ -128,7 +173,7 @@ class StrategyEngine:
                 return point
 
         self._active_signal = point.trend.value
-        self._handle_signal_change(point)
+        self._handle_signal_change(point, effective_htf)
         return point
 
     def evaluate_stop_loss(self, current_premium: float, timestamp: int) -> bool:
@@ -139,7 +184,22 @@ class StrategyEngine:
         if self.current_position is None:
             return False
             
-        if self._manual_sl_threshold is not None:
+        if self._lowest_premium_seen is None or current_premium < self._lowest_premium_seen:
+            self._lowest_premium_seen = current_premium
+            
+        # Trailing breakeven: lock in theta gains
+        if self.cfg.trailing_breakeven_pct > 0:
+            target_drop = self.current_position.entry_premium * (1 - self.cfg.trailing_breakeven_pct / 100.0)
+            if self._lowest_premium_seen <= target_drop:
+                # We captured X% of the premium, trail stop to breakeven
+                if self._manual_sl_threshold is None or self._manual_sl_threshold > self.current_position.entry_premium:
+                    self._manual_sl_threshold = self.current_position.entry_premium
+            
+        if self.cfg.use_underlying_sl and self._manual_sl_threshold is None:
+            # Only use underlying Supertrend reversals for SL, ignore premium spikes
+            # (unless the trailing breakeven above activated manual_sl_threshold)
+            sl_threshold = float('inf')
+        elif self._manual_sl_threshold is not None:
             sl_threshold = self._manual_sl_threshold
         else:
             sl_threshold = self.current_position.entry_premium * (1 + self.cfg.stop_loss_percent / 100.0)
@@ -164,7 +224,7 @@ class StrategyEngine:
             return
         self._close_current_position(timestamp, reason=reason)
 
-    def _handle_signal_change(self, point: SupertrendPoint) -> None:
+    def _handle_signal_change(self, point: SupertrendPoint, htf_trend: Optional[str] = None) -> None:
         # 1. Close existing position if one is open (position reversal, spec section 4)
         if self.current_position is not None:
             if not self._close_current_position(point.timestamp, reason="supertrend_reversal"):
@@ -173,9 +233,17 @@ class StrategyEngine:
                 return
 
         # 2. Attempt to open the new position for the new signal direction
-        self._attempt_open(point)
+        self._attempt_open(point, htf_trend)
 
-    def _attempt_open(self, point: SupertrendPoint) -> None:
+    def _attempt_open(self, point: SupertrendPoint, htf_trend: Optional[str] = None) -> None:
+        if htf_trend is not None and point.trend.value != htf_trend:
+            self.on_event(EngineEvent(
+                kind="trade_skipped",
+                timestamp=point.timestamp,
+                payload={"reason": f"htf_trend_mismatch (HTF:{htf_trend} != Signal:{point.trend.value})", "signal": point.trend.value},
+            ))
+            return
+            
         option_type = option_type_for_signal(point.trend.value)
 
         result = select_expiry_and_strike(
@@ -290,5 +358,6 @@ class StrategyEngine:
         ))
         self.current_position = None
         self._manual_sl_threshold = None
+        self._lowest_premium_seen = None
         self._flat_reason = reason
         return True

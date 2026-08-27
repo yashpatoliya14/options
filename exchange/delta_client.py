@@ -273,6 +273,10 @@ class DeltaClient(Broker):
             if not (symbol.startswith("C-") or symbol.startswith("P-")):
                 continue
                 
+            # Filter out options for other underlying assets (e.g., ETH)
+            if f"-{self.cfg.underlying_asset}-" not in symbol:
+                continue
+                
             option_type, strike, expiry = self._parse_option_symbol(symbol)
             if strike == 0.0:
                 continue

@@ -44,7 +44,11 @@ def select_expiry_and_strike(
     best_expiry_seen: Optional[str] = None
 
     for i, expiry in enumerate(expiries):
-        label = "today" if i == 0 else "tomorrow" if i == 1 else f"day_{i}"
+        # Spec Section 6: Only try today (0) and tomorrow (1)
+        if i > 1:
+            break
+            
+        label = "today" if i == 0 else "tomorrow"
         
         quotes = broker.get_option_chain(underlying, expiry, timestamp=as_of_timestamp)
         # Pass min_premium down so we pick the closest strike that ACTUALLY meets the minimum premium.

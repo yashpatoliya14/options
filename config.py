@@ -41,7 +41,12 @@ class StrategyConfig:
     # Minimum premium of at least $250 per 1 BTC contract
     min_premium_usd: float = _float_env("MIN_PREMIUM", 250.0)
     
-    # --- Stop Loss ---
+    # --- Advanced Strategy Features ---
+    htf_timeframe: str = os.getenv("HTF_TIMEFRAME", "1d")
+    use_underlying_sl: bool = _bool_env("USE_UNDERLYING_SL", True)
+    trailing_breakeven_pct: float = _float_env("TRAILING_BREAKEVEN_PCT", 50.0)
+    
+    # --- Stop Loss (Premium-based fallback) ---
     stop_loss_percent: float = _float_env("STOP_LOSS_PERCENT", 20.0)
 
     # --- Underlying / instrument ---
