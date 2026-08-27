@@ -121,9 +121,10 @@ class SupertrendCalculator:
             )
 
         if self._supertrend is None:
-            # initialize trend by comparing close to the basic bands
-            trend = Trend.BULLISH if candle.close > final_upper else Trend.BEARISH
-            supertrend_value = final_lower if trend == Trend.BULLISH else final_upper
+            # Pine Script / TradingView convention: first computable bar always
+            # starts in downtrend (BEARISH), letting subsequent bars evolve it.
+            trend = Trend.BEARISH
+            supertrend_value = final_upper
         else:
             prev_trend = self._trend
             if prev_trend == Trend.BULLISH:

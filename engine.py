@@ -80,13 +80,19 @@ class StrategyEngine:
         
         import datetime
         try:
+            # NOTE: hour=12 UTC is an assumption about Delta's settlement time.
+            # Confirm against Delta's actual API/docs if available.
             expiry_dt = datetime.datetime.fromisoformat(self.current_position.expiry).replace(
                 hour=12, minute=0, tzinfo=datetime.timezone.utc
             )
             if timestamp >= expiry_dt.timestamp():
                 self._close_current_position(timestamp, reason="expired_settlement")
-        except Exception:
-            pass
+        except Exception as e:
+            self.on_event(EngineEvent(
+                kind="error",
+                timestamp=timestamp,
+                payload={"reason": str(e), "context": "check_expirations"},
+            ))
 
     def on_candle_close(self, candle: Candle) -> Optional[SupertrendPoint]:
         """
@@ -106,6 +112,7 @@ class StrategyEngine:
                 "trend": point.trend.value,
                 "reference_price": point.reference_price,
                 "signal_change": point.signal_change,
+                "supertrend_value": point.value,
             },
         ))
 

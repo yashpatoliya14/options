@@ -35,6 +35,18 @@ logging.basicConfig(
 log = logging.getLogger("live_algo")
 
 
+def _timeframe_seconds(tf: str) -> int:
+    """Convert a timeframe string like '1h', '2h', '3h' to seconds."""
+    tf = tf.strip().lower()
+    if tf.endswith("h"):
+        return int(tf[:-1]) * 3600
+    elif tf.endswith("m"):
+        return int(tf[:-1]) * 60
+    elif tf.endswith("d"):
+        return int(tf[:-1]) * 86400
+    raise ValueError(f"Unsupported timeframe format: {tf}")
+
+
 class PaperBroker:
     """
     Wraps DeltaClient for REAL market data (option chains, candles) but never
@@ -79,7 +91,7 @@ class PaperBroker:
 
 def fetch_timeframe_candles(client: DeltaClient, symbol: str, start_ts: int, end_ts: int) -> List[Candle]:
     res = CONFIG.timeframe
-    duration = 7200 if res == "2h" else 3600
+    duration = _timeframe_seconds(res)
     raw = client.get_historical_candles(symbol, res, start_ts, end_ts)
     if not raw:
         return []
@@ -95,6 +107,18 @@ def fetch_timeframe_candles(client: DeltaClient, symbol: str, start_ts: int, end
     return candles
 
 
+def fetch_live_premium(client: DeltaClient, position: Position) -> Optional[float]:
+    """Fetch the current live mark_price for an open position's option."""
+    try:
+        ticker = client.get_ticker(position.symbol)
+        mark = ticker.get("mark_price") or ticker.get("close")
+        if mark is not None:
+            return float(mark)
+    except Exception as e:
+        log.warning(f"Failed to fetch live premium for {position.symbol}: {e}")
+    return None
+
+
 def build_candle_stream_poller(client: DeltaClient, last_seen_ts: Optional[int]):
     """
     Polls Delta for the most recently CLOSED candle and yields it once,
@@ -102,7 +126,7 @@ def build_candle_stream_poller(client: DeltaClient, last_seen_ts: Optional[int])
     """
     def poll() -> Optional[Candle]:
         now = int(time.time())
-        duration = 7200 if CONFIG.timeframe == "2h" else 3600
+        duration = _timeframe_seconds(CONFIG.timeframe)
         # Fetch candles for the last 3 periods
         candles = fetch_timeframe_candles(client, CONFIG.underlying_symbol, now - 3 * duration, now)
         
@@ -188,7 +212,7 @@ def warm_up_engine(client: DeltaClient, engine: StrategyEngine):
     immediately instead of waiting 48+ hours for the indicator to initialize.
     """
     now = int(time.time())
-    duration = 7200 if CONFIG.timeframe == "2h" else 3600
+    duration = _timeframe_seconds(CONFIG.timeframe)
     start_ts = now - (200 * duration)
     
     try:
@@ -203,8 +227,25 @@ def warm_up_engine(client: DeltaClient, engine: StrategyEngine):
         log.info(f"Warming up Supertrend with {len(candles)} historical {CONFIG.timeframe} candles...")
         for candle in candles:
             engine.supertrend.update(candle)
+
+        # Sync engine state from the warm-up Supertrend state so that
+        # _last_trend and _active_signal are consistent with indicator history.
+        # Without this, a restart with no existing_position leaves both as None,
+        # and the first live candle may be misclassified.
+        if engine.supertrend.history:
+            last_point = engine.supertrend.history[-1]
+            engine._last_trend = last_point.trend
+            # Only update _active_signal if no existing position was restored
+            # (existing_position already set _active_signal correctly).
+            if engine.current_position is None:
+                engine._active_signal = last_point.trend.value
+            log.info(f"Warm-up complete. Supertrend state: trend={last_point.trend.value}, "
+                     f"value={last_point.value:.2f}, ref_price={last_point.reference_price:.2f}")
+
+        return candles[-1].timestamp if candles else None
     except Exception as e:
         log.error(f"Failed to warm up engine: {e}")
+        return None
 
 
 def main():
@@ -284,7 +325,7 @@ def main():
             if e.kind == "signal":
                 store.record_signal(e.timestamp, e.payload["trend"], e.payload["reference_price"], e.payload["signal_change"])
                 if e.payload["signal_change"]:
-                    notifier.signal(e.payload["trend"], e.payload["reference_price"], e.payload["reference_price"], CONFIG)
+                    notifier.signal(e.payload["trend"], e.payload["reference_price"], e.payload["supertrend_value"], CONFIG)
             elif e.kind == "trade_entry":
                 store.record_trade_entry(
                     e.timestamp, e.payload["signal"], e.payload["option_type"], e.payload["strike"],
@@ -323,20 +364,20 @@ def main():
             log.exception("Failed while handling engine event %s", e.kind)
 
     engine = StrategyEngine(CONFIG, broker, on_event, existing_position=existing_position)
-    warm_up_engine(real_client, engine)
+    warmup_last_ts = warm_up_engine(real_client, engine)
 
-    last_ts = store.get_state("last_candle_timestamp")
+    stored_last_ts = store.get_state("last_candle_timestamp")
+    # Use whichever is more recent: the stored timestamp or the warm-up's last candle.
+    # This prevents re-processing the final warm-up candle as a "new" live candle.
+    last_ts = max(stored_last_ts or 0, warmup_last_ts or 0) or None
     poller = build_candle_stream_poller(real_client, last_ts)
 
     startup_msg = f"Live algo started in {mode.upper()} mode.\nAsset: {CONFIG.underlying_symbol}"
     log.info(startup_msg)
     notifier.status(startup_msg)
     log.info(f"Entering poll loop. Waiting for closed {CONFIG.timeframe} candles...")
-    
-    last_status_sent = time.time()
-    last_6h_status_sent = time.time() - (6 * 3600) + 60
-    
-    # Flush old updates so they don't trigger on restart
+
+    # Flush old Telegram updates so they don't trigger on restart
     last_processed_update_id = 0
     try:
         flush_updates = notifier.get_updates(offset=-1)
@@ -344,148 +385,67 @@ def main():
             last_processed_update_id = flush_updates[0]["update_id"]
     except Exception:
         pass
-        
-    force_open = False
-    force_close = False
-    
+
     while True:
-        # Telegram updates (pass offset to confirm processed messages)
-        req_offset = last_processed_update_id + 1 if last_processed_update_id > 0 else None
-        updates = notifier.get_updates(offset=req_offset)
-        for update in updates:
-            update_id = update.get("update_id", 0)
-            if update_id > last_processed_update_id:
-                last_processed_update_id = update_id
-                msg_text = update.get("message", {}).get("text", "").lower().strip()
-                callback_query = update.get("callback_query")
-                
-                parts = []
-                if callback_query:
-                    cb_data = callback_query.get("data", "").lower()
-                    cb_id = callback_query.get("id")
-                    notifier.answer_callback(cb_id)
-                    if cb_data == "close_o1":
-                        parts = ["close", "o1"]
-                    elif cb_data == "open_o1":
-                        parts = ["open", "o1"]
-                    elif cb_data == "clear_o1":
-                        parts = ["clear", "o1"]
-                    elif cb_data == "cancel_o1":
-                        parts = ["cancel", "o1"]
-                    elif cb_data == "sl_o1":
-                        notifier.status("To update SL for O1, please send the command:\n`/sl O1 <price>`", parse_mode="Markdown")
-                elif msg_text:
+        # --- Telegram: only respond to "logs" / "/logs" ---
+        try:
+            req_offset = last_processed_update_id + 1 if last_processed_update_id > 0 else None
+            updates = notifier.get_updates(offset=req_offset)
+            for update in updates:
+                update_id = update.get("update_id", 0)
+                if update_id > last_processed_update_id:
+                    last_processed_update_id = update_id
+                    msg_text = update.get("message", {}).get("text", "").lower().strip()
+
                     if msg_text in ["/logs", "logs"]:
-                        last_6h_status_sent = 0
-                    parts = msg_text.split()
-                    
-                if len(parts) >= 3 and parts[0] == "/sl" and parts[1] == "o1":
-                    try:
-                        new_sl = float(parts[2])
-                        if engine.current_position:
-                            engine._manual_sl_threshold = new_sl
-                            notifier.status(f"✅ SL for O1 manually updated to ${new_sl:,.2f}")
+                        # Build current status report
+                        pos = engine.current_position
+                        trend_str = engine._last_trend.value if engine._last_trend else "N/A"
+                        st_info = ""
+                        if engine.supertrend.history:
+                            last_pt = engine.supertrend.history[-1]
+                            st_info = (
+                                f"Supertrend: ${last_pt.value:,.2f}\n"
+                                f"Last Ref Price: ${last_pt.reference_price:,.2f}"
+                            )
+
+                        lines = [
+                            f"📊 *ALGO STATUS*\n",
+                            f"Mode: {mode.upper()}",
+                            f"Trend: *{trend_str}*",
+                        ]
+                        if st_info:
+                            lines.append(st_info)
+
+                        if pos:
+                            current_sl = engine._manual_sl_threshold if engine._manual_sl_threshold is not None else pos.entry_premium * (1 + CONFIG.stop_loss_percent / 100.0)
+                            lines.append(
+                                f"\n📌 *Open Position*\n"
+                                f"Symbol: `{pos.symbol}`\n"
+                                f"Type: {pos.option_type.upper()} | Strike: {pos.strike:,.0f}\n"
+                                f"Expiry: {pos.expiry}\n"
+                                f"Size: {pos.quantity} | Entry: ${pos.entry_premium:.2f}\n"
+                                f"SL: ${current_sl:.2f}"
+                            )
                         else:
-                            notifier.status("❌ No active position for O1")
-                    except Exception:
-                        notifier.status("❌ Invalid format. Use: `/sl O1 25.5`", parse_mode="Markdown")
-                        
-                elif len(parts) >= 2 and parts[0] == "close" and parts[1] == "o1":
-                    force_close = True
-                    notifier.status("⏳ Command received: Queued CLOSE for O1 (will execute on next poll).")
-                elif len(parts) >= 2 and parts[0] == "open" and parts[1] == "o1":
-                    force_open = True
-                    notifier.status("⏳ Command received: Queued OPEN for O1 (will execute on next poll).")
-                elif len(parts) >= 2 and parts[0] == "clear" and parts[1] == "o1":
-                    if engine.current_position:
-                        engine.current_position = None
-                        store.record_trade_exit(int(time.time()), 0.0, "manual_state_clear")
-                        notifier.status("✅ Local state cleared. Bot now thinks position is closed.")
-                    else:
-                        notifier.status("❌ Already clear.")
-                elif len(parts) >= 2 and parts[0] == "cancel" and parts[1] == "o1":
-                    force_close = False
-                    force_open = False
-                    notifier.status("✅ Cleared any pending manual OPEN/CLOSE commands for O1.")
+                            lines.append("\n📌 No open position")
 
-        # Send 12-hour status update
-        if time.time() - last_status_sent >= 12 * 3600:
-            try:
-                notifier.status(startup_msg)
-            except Exception:
-                pass
-            last_status_sent = time.time()
-
-        if time.time() - last_6h_status_sent >= 6 * 3600:
-            pos = engine.current_position
-            lines = ["🌟 *OPTIONS ALGO STATUS* 🌟\n_Open Positions:_"]
-            keyboard = []
-            
-            if pos:
-                current_sl = engine._manual_sl_threshold if engine._manual_sl_threshold is not None else pos.entry_premium * (1 + CONFIG.stop_loss_percent / 100.0)
-                lines.append(f"🔹 `[O1]` *{pos.symbol}* {pos.side.upper()} {pos.option_type.upper()} {pos.strike} | Size: {pos.quantity} | Entry: ${pos.entry_premium:.2f} | SL: ${current_sl:.2f}")
-                keyboard.append([
-                    {"text": "Close O1", "callback_data": "close_o1"},
-                    {"text": "Update SL O1", "callback_data": "sl_o1"}
-                ])
-                keyboard.append([
-                    {"text": "Clear State (If closed)", "callback_data": "clear_o1"},
-                    {"text": "Force Reopen", "callback_data": "open_o1"}
-                ])
-                keyboard.append([
-                    {"text": "Cancel Queue O1", "callback_data": "cancel_o1"}
-                ])
-            else:
-                lines.append(f"🔸 `[O1]` None")
-                keyboard.append([
-                    {"text": "Place Again O1", "callback_data": "open_o1"}
-                ])
-                keyboard.append([
-                    {"text": "Cancel Queue O1", "callback_data": "cancel_o1"}
-                ])
-                
-            reply_markup = {"inline_keyboard": keyboard}
-            try:
-                notifier.status("\n".join(lines), parse_mode="Markdown", reply_markup=reply_markup)
-            except Exception:
-                pass
-            last_6h_status_sent = time.time()
+                        notifier.status("\n".join(lines), parse_mode="Markdown")
+        except Exception:
+            log.exception("Error processing Telegram updates")
 
         try:
-            if force_close:
-                if engine.current_position:
-                    engine._close_current_position(int(time.time()), reason="manual_close")
-                    notifier.status("✅ Manual Close Executed for O1")
-                else:
-                    notifier.status("❌ Failed to Close: No active position for O1")
-                force_close = False
-                
-            if force_open:
-                from strategy.supertrend import SupertrendPoint, Trend
-                trend = engine._last_trend if engine._last_trend else Trend.BULLISH
-                try:
-                    spot_px = float(real_client.get_ticker(CONFIG.underlying_symbol).get("mark_price", 0))
-                except Exception as e:
-                    log.error(f"Failed to fetch ticker for force_open: {e}")
-                    # Fallback to the last known supertrend reference price
-                    spot_px = engine.supertrend.points[-1].reference_price if engine.supertrend.points else 0
-                    
-                point = SupertrendPoint(
-                    timestamp=int(time.time()),
-                    trend=trend,
-                    value=spot_px * 0.9,
-                    reference_price=spot_px,
-                    signal_change=True
-                )
-                engine._attempt_open(point)
-                force_open = False
+            # --- Live stop-loss check (every poll tick) ---
+            if engine.current_position is not None:
+                live_premium = fetch_live_premium(real_client, engine.current_position)
+                if live_premium is not None:
+                    if engine.evaluate_stop_loss(live_premium, int(time.time())):
+                        log.warning(f"STOP LOSS triggered at premium={live_premium:.2f}")
+                        # on_event callback already handles persistence & notification
 
             candle = poller()
             if candle is not None:
                 log.info(f"New closed candle: t={candle.timestamp} close={candle.close}")
-                
-                if hasattr(broker, "estimate_margin_per_lot"):
-                    pass  # broker already carries CONFIG-scoped clock-free lookups for live mode
                 engine.on_candle_close(candle)
                 store.set_state("last_candle_timestamp", candle.timestamp)
         except Exception:
