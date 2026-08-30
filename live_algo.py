@@ -234,10 +234,10 @@ def warm_up_engine(client: DeltaClient, engine: StrategyEngine):
         # and the first live candle may be misclassified.
         if engine.supertrend.history:
             last_point = engine.supertrend.history[-1]
-            engine._last_trend = last_point.trend
-            # Only update _active_signal if no existing position was restored
-            # (existing_position already set _active_signal correctly).
+            # Only update _last_trend and _active_signal if no existing position was restored
+            # (existing_position already set them correctly).
             if engine.current_position is None:
+                engine._last_trend = last_point.trend
                 engine._active_signal = last_point.trend.value
             log.info(f"Warm-up complete. Supertrend state: trend={last_point.trend.value}, "
                      f"value={last_point.value:.2f}, ref_price={last_point.reference_price:.2f}")
@@ -400,7 +400,7 @@ def main():
                     if msg_text in ["/logs", "logs"]:
                         # Build current status report
                         pos = engine.current_position
-                        trend_str = engine._last_trend.value if engine._last_trend else "N/A"
+                        trend_str = pos.strategy_direction if pos else (engine._active_signal if engine._active_signal else "N/A")
                         st_info = ""
                         if engine.supertrend.history:
                             last_pt = engine.supertrend.history[-1]
