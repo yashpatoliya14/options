@@ -418,7 +418,7 @@ def main():
                             lines.append(st_info)
 
                         if pos:
-                            current_sl = engine._manual_sl_threshold if engine._manual_sl_threshold is not None else pos.entry_premium * (1 + CONFIG.stop_loss_percent / 100.0)
+                            current_sl = engine._manual_sl_threshold if engine._manual_sl_threshold is not None else pos.entry_premium * 2.0
                             lines.append(
                                 f"\n📌 *Open Position*\n"
                                 f"Symbol: `{pos.symbol}`\n"

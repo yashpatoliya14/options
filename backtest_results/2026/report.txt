@@ -15,22 +15,22 @@ Data Mode: reconstructed
 CAPITAL SUMMARY
 ------------------------------
 Initial Capital: $1,000.00
-Final Capital: $3,177.56
-Net P&L: $2,177.56
-Return: 217.76%
+Final Capital: $3,178.81
+Net P&L: $2,178.81
+Return: 217.88%
 
 TRADING STATISTICS
 ------------------------------
-Total Trades: 291
+Total Trades: 292
 Winning Trades: 202
-Losing Trades: 89
-Win Rate: 69.42%
+Losing Trades: 90
+Win Rate: 69.18%
 Profit Factor: 2.05
 Max Drawdown: $-382.83
-Average Trade P&L: $7.48
+Average Trade P&L: $7.46
 Largest Win: $58.97
 Largest Loss: $-123.90
-Total Fees: $320.51
+Total Fees: $321.78
 
 TRADE DETAILS
 ------------------------------
@@ -44,9 +44,9 @@ Trade 7: PUT Strike $90,900 Qty 71 P&L $4.40
 Trade 8: PUT Strike $90,900 Qty 72 P&L $9.02
 Trade 9: PUT Strike $90,900 Qty 68 P&L $57.47
 Trade 10: PUT Strike $93,100 Qty 69 P&L $-9.67
-... and 281 more trades
+... and 282 more trades
 
 EXECUTION INFO
 ------------------------------
-Run at: 2026-08-27T22:39:56.196703
-Data Range: 2026-01-02T09:30:00 to 2026-08-27T23:30:00
+Run at: 2026-08-30T19:23:23.291949
+Data Range: 2026-01-02T09:30:00 to 2026-08-30T19:30:00

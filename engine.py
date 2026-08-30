@@ -202,7 +202,7 @@ class StrategyEngine:
         elif self._manual_sl_threshold is not None:
             sl_threshold = self._manual_sl_threshold
         else:
-            sl_threshold = self.current_position.entry_premium * (1 + self.cfg.stop_loss_percent / 100.0)
+            sl_threshold = self.current_position.entry_premium * 2.0
         
         # We sold the option, so if premium goes UP above the threshold, we lose and SL triggers.
         if current_premium >= sl_threshold:
