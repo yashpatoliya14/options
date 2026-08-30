@@ -25,6 +25,7 @@ live_algo.py in live or paper mode:
 """
 import hashlib
 import hmac
+import logging
 import re
 import time
 from typing import Any, Dict, List, Optional
@@ -33,6 +34,8 @@ import requests
 
 from broker import Broker, OptionQuote, OrderResult, Position
 from config import StrategyConfig
+
+log = logging.getLogger("delta_client")
 
 
 class DeltaClient(Broker):
@@ -47,7 +50,7 @@ class DeltaClient(Broker):
 
     def _signature(self, method: str, path: str, query: str, body: str, timestamp: str) -> str:
         message = method + timestamp + path + query + body
-        return hmac.new(
+        return hmac.HMAC(
             self.api_secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256
         ).hexdigest()
 
@@ -62,25 +65,31 @@ class DeltaClient(Broker):
             "Content-Type": "application/json",
         }
 
-    def _get(self, path: str, params: Optional[dict] = None, signed: bool = False) -> Any:
+    def _get(self, path: str, params: Optional[dict] = None, signed: bool = False, retries: int = 3) -> Any:
         url = self.base_url + path
         headers = {"Accept": "application/json"}
         if signed:
             query = ("?" + requests.compat.urlencode(params)) if params else ""
             headers = self._signed_headers("GET", path, query)
-        resp = self.session.get(url, params=params, headers=headers, timeout=15)
-        try:
-            resp.raise_for_status()
-        except requests.HTTPError as exc:
-            # Delta often puts the useful reason in its JSON response body.
-            # Preserve the HTTP status while making the actionable API error
-            # visible to the caller.
+        
+        last_exc = None
+        for attempt in range(retries):
             try:
-                detail = resp.json()
-            except ValueError:
-                detail = resp.text[:500]
-            raise requests.HTTPError(f"{exc}; Delta response: {detail}", response=resp) from exc
-        return resp.json()
+                resp = self.session.get(url, params=params, headers=headers, timeout=15)
+                resp.raise_for_status()
+                return resp.json()
+            except (requests.ConnectionError, requests.Timeout) as exc:
+                last_exc = exc
+                wait = 2 ** attempt
+                log.warning(f"API request {path} failed (attempt {attempt+1}/{retries}), retrying in {wait}s: {exc}")
+                time.sleep(wait)
+            except requests.HTTPError as exc:
+                try:
+                    detail = resp.json()
+                except ValueError:
+                    detail = resp.text[:500]
+                raise requests.HTTPError(f"{exc}; Delta response: {detail}", response=resp) from exc
+        raise last_exc
 
     def _post(self, path: str, body: dict) -> Any:
         import json
@@ -228,10 +237,23 @@ class DeltaClient(Broker):
                 hour=12, minute=0, tzinfo=datetime.timezone.utc
             )
             if time.time() >= expiry_dt.timestamp():
+                # Expired option: settle at intrinsic value, not 0.
+                # For a short position, intrinsic is what we owe.
+                try:
+                    ticker = self.get_ticker(self.cfg.underlying_symbol)
+                    spot = float(ticker.get("close") or ticker.get("mark_price") or position.strike)
+                except Exception:
+                    spot = position.strike  # Fallback: assume ATM (intrinsic = 0)
+                
+                if position.option_type == "call":
+                    intrinsic = max(0.0, spot - position.strike)
+                else:
+                    intrinsic = max(0.0, position.strike - spot)
+                
                 return OrderResult(
                     success=True, 
                     order_id="auto-settled", 
-                    filled_premium=0.0, 
+                    filled_premium=intrinsic, 
                     quantity=position.quantity, 
                     message="expired_settlement"
                 )

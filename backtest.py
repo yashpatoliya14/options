@@ -249,7 +249,6 @@ def summarize(events: List[EngineEvent], data_mode: str, cfg, initial_margin: fl
         sharpe = statistics.mean(returns) / statistics.pstdev(returns)
 
     monthly_pnl = {}
-    import datetime
     for t in trades:
         if t.get("liquidated") and t["cumulative_pnl"] == 0.0 and t != active_trades[-1] if active_trades else True:
             continue  # Skip post-liquidation phantom trades
@@ -327,7 +326,6 @@ def print_beautiful_output(result: dict) -> None:
         table.add_column("Cum PnL", justify="right", style="bold cyan", no_wrap=True)
         table.add_column("Reason", style="cyan")
 
-        import datetime
         for t in trades:
             # Using local time instead of UTC, and including the year
             entry_dt = datetime.datetime.fromtimestamp(t["entry_timestamp"]).strftime("%Y-%m-%d %H:%M")
@@ -400,8 +398,6 @@ def run_year_backtest(year: int, initial_capital: float, cfg, data_mode: str = "
     Returns:
         Backtest results dictionary
     """
-    import datetime
-    
     # Define year boundaries
     start_date = datetime.datetime(year, 1, 1)
     end_date = datetime.datetime(year, 12, 31, 23, 59, 59)
@@ -453,9 +449,7 @@ def save_backtest_results(year: int, result: dict, initial_capital: float, cfg,
     Save backtest results to organized directory structure.
     """
     import os
-    import json
     import csv
-    import datetime
     
     # Create directory structure
     results_dir = f"backtest_results/{year}"
@@ -660,7 +654,6 @@ def compare_years(years: list, initial_capital: float, cfg, data_mode: str = "re
     console.print(table)
     
     # Save comparison
-    import json
     comparison = {
         "initial_capital": initial_capital,
         "leverage": leverage,

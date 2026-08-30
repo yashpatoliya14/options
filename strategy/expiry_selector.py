@@ -42,6 +42,8 @@ def select_expiry_and_strike(
 
     best_premium_seen: Optional[float] = None
     best_expiry_seen: Optional[str] = None
+    overall_best_quote: Optional[OptionQuote] = None
+    overall_best_label: Optional[str] = None
 
     for i, expiry in enumerate(expiries):
         # Spec Section 6: Only try today (0) and tomorrow (1)
@@ -59,8 +61,11 @@ def select_expiry_and_strike(
         if best_premium_seen is None or best.premium > best_premium_seen:
             best_premium_seen = best.premium
             best_expiry_seen = label
-            
-        return ExpirySelectionResult(best, label)
+            overall_best_quote = best
+            overall_best_label = label
+
+    if overall_best_quote is not None:
+        return ExpirySelectionResult(overall_best_quote, overall_best_label)
 
     return ExpirySelectionResult(
         None,

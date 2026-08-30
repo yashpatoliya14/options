@@ -8,6 +8,7 @@ This module provides consistent 3H candle aggregation that works identically
 in backtest and live modes to ensure strategy consistency.
 """
 from typing import List, Dict, Any
+import time
 from strategy.supertrend import Candle
 
 
@@ -67,7 +68,7 @@ def is_3h_resolution_supported(client) -> bool:
     """
     try:
         # Try to fetch a small window with 3h resolution
-        now = 1787493252  # Use a known timestamp
+        now = int(time.time())
         test_data = client.get_historical_candles("BTCUSDT", "3h", now - 10800, now)
         return True
     except Exception:
@@ -109,7 +110,7 @@ def get_latest_3h_candle(client, symbol: str) -> Candle:
     
     This is used by live_algo.py to poll for new 3H candles.
     """
-    now = 1787493252  # Use current timestamp
+    now = int(time.time())
     # Look back enough to ensure we get at least one complete 3H candle
     start_ts = now - 4 * 3600  # 4 hours back
     

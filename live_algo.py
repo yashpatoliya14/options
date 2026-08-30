@@ -21,8 +21,8 @@ import time
 from typing import List, Optional
 
 from config import CONFIG
-from broker import Position
-from engine import StrategyEngine, EngineEvent
+from broker import Broker, Position
+from engine import StrategyEngine, EngineEvent, _timeframe_seconds
 from strategy.supertrend import Candle
 from exchange.delta_client import DeltaClient
 from storage.state_store import StateStore
@@ -35,19 +35,10 @@ logging.basicConfig(
 log = logging.getLogger("live_algo")
 
 
-def _timeframe_seconds(tf: str) -> int:
-    """Convert a timeframe string like '1h', '2h', '3h' to seconds."""
-    tf = tf.strip().lower()
-    if tf.endswith("h"):
-        return int(tf[:-1]) * 3600
-    elif tf.endswith("m"):
-        return int(tf[:-1]) * 60
-    elif tf.endswith("d"):
-        return int(tf[:-1]) * 86400
-    raise ValueError(f"Unsupported timeframe format: {tf}")
+# _timeframe_seconds is imported from engine
 
 
-class PaperBroker:
+class PaperBroker(Broker):
     """
     Wraps DeltaClient for REAL market data (option chains, candles) but never
     places real orders -- simulates fills using the live quoted premium plus
@@ -227,6 +218,28 @@ def warm_up_engine(client: DeltaClient, engine: StrategyEngine):
         log.info(f"Warming up Supertrend with {len(candles)} historical {CONFIG.timeframe} candles...")
         for candle in candles:
             engine.supertrend.update(candle)
+            
+            # Warm up HTF supertrend using the same aggregation logic as engine.py
+            bucket_start = ((candle.timestamp - 1) // engine.htf_duration) * engine.htf_duration
+            bucket_end = bucket_start + engine.htf_duration
+            
+            if engine._current_htf_candle is None or engine._current_htf_candle.timestamp != bucket_end:
+                if engine._current_htf_candle is not None:
+                    htf_point = engine.htf_supertrend.update(engine._current_htf_candle)
+                    if htf_point:
+                        engine._htf_trend_value = htf_point.trend.value
+                
+                engine._current_htf_candle = Candle(
+                    timestamp=bucket_end,
+                    open=candle.open,
+                    high=candle.high,
+                    low=candle.low,
+                    close=candle.close
+                )
+            else:
+                engine._current_htf_candle.high = max(engine._current_htf_candle.high, candle.high)
+                engine._current_htf_candle.low = min(engine._current_htf_candle.low, candle.low)
+                engine._current_htf_candle.close = candle.close
 
         # Sync engine state from the warm-up Supertrend state so that
         # _last_trend and _active_signal are consistent with indicator history.
@@ -344,8 +357,12 @@ def main():
                 entry_premium = e.payload["entry_premium"]
                 exit_premium = e.payload.get("exit_premium") or 0.0
                 qty = e.payload["quantity"]
-                gross = (entry_premium - exit_premium) * qty
-                fees = (entry_premium + exit_premium) * qty * (CONFIG.fee_pct / 100.0)
+                strike = e.payload["strike"]
+                contract_val = CONFIG.contract_value_underlying
+                
+                gross = (entry_premium - exit_premium) * qty * contract_val
+                notional = strike * contract_val * qty
+                fees = notional * (CONFIG.fee_pct / 100.0) * 2  # Entry + Exit fee
                 net = gross - fees
                 store.record_trade_exit(e.timestamp, exit_premium, e.payload["reason"])
                 store.record_order(
