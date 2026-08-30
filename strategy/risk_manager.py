@@ -1,13 +1,11 @@
 """
 Risk management.
 
-Confirmed sizing rule: margin-budget cap. Given a selected option contract,
-compute the max number of lots whose combined estimated margin fits within
-MARGIN_BUDGET_USD (config.py), subject to MAX_OPEN_POSITIONS = 1 (only one
-strategy position at a time, per spec section 4).
+Simple fixed-lot sizing: every trade uses FIXED_LOT_SIZE lots.
+If the account balance is insufficient for the required margin, the trade
+is rejected. No margin-budget-based dynamic sizing.
 
-All limits are configurable in config.py / .env -- nothing here is hard-coded
-beyond the algorithm itself.
+All limits are configurable in config.py / .env.
 """
 from dataclasses import dataclass
 from typing import Optional
@@ -37,22 +35,17 @@ class RiskManager:
         if margin_per_lot <= 0:
             return SizingResult(0, 0.0, 0.0, "invalid_margin_estimate")
 
-        budget = self.cfg.margin_budget_usd
-        if self.cfg.max_margin_usage_usd > 0:
-            budget = min(budget, self.cfg.max_margin_usage_usd)
+        quantity = self.cfg.fixed_lot_size
+        total_margin_needed = margin_per_lot * quantity
 
-        quantity = int(budget // margin_per_lot)
-
-        if self.cfg.max_position_size > 0:
-            quantity = min(quantity, self.cfg.max_position_size)
-
-        if quantity < 1:
+        # Reject if balance is insufficient for the required margin
+        if total_margin_needed > self.cfg.margin_budget_usd:
             return SizingResult(
                 0, margin_per_lot, 0.0,
-                f"margin_budget_${budget:.2f}_insufficient_for_1_lot_(needs_${margin_per_lot:.2f})",
+                f"insufficient_balance_${self.cfg.margin_budget_usd:.2f}_need_${total_margin_needed:.2f}_for_{quantity}_lots",
             )
 
-        return SizingResult(quantity, margin_per_lot, margin_per_lot * quantity)
+        return SizingResult(quantity, margin_per_lot, total_margin_needed)
 
     def daily_loss_limit_breached(self, realized_pnl_today: float) -> bool:
         if self.cfg.max_daily_loss_usd <= 0:

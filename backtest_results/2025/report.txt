@@ -7,46 +7,46 @@ timeframe: 2h
 supertrend_atr_period: 16
 supertrend_multiplier: 1.5
 min_premium_usd: 250.0
-margin_budget_usd: 1000.0
+margin_budget_usd: 10000.0
 contract_value_underlying: 0.001
 Fee Rate: 0.0100%
 Data Mode: reconstructed
 
 CAPITAL SUMMARY
 ------------------------------
-Initial Capital: $1,000.00
-Final Capital: $2,979.47
-Net P&L: $1,979.47
-Return: 197.95%
+Initial Capital: $10,000.00
+Final Capital: $26,281.62
+Net P&L: $16,281.62
+Return: 162.82%
 
 TRADING STATISTICS
 ------------------------------
-Total Trades: 449
-Winning Trades: 271
-Losing Trades: 178
-Win Rate: 60.36%
-Profit Factor: 1.71
-Max Drawdown: $-263.75
-Average Trade P&L: $4.41
-Largest Win: $55.33
-Largest Loss: $-102.40
-Total Fees: $501.09
+Total Trades: 531
+Winning Trades: 366
+Losing Trades: 165
+Win Rate: 68.93%
+Profit Factor: 1.33
+Max Drawdown: $-8,496.36
+Average Trade P&L: $30.66
+Largest Win: $598.41
+Largest Loss: $-1,972.10
+Total Fees: $6,073.81
 
 TRADE DETAILS
 ------------------------------
-Trade 1: CALL Strike $95,950 Qty 50 P&L $-9.10
-Trade 2: PUT Strike $95,000 Qty 67 P&L $-0.06
-Trade 3: CALL Strike $102,000 Qty 47 P&L $35.25
-Trade 4: CALL Strike $96,900 Qty 50 P&L $-3.11
-Trade 5: PUT Strike $92,150 Qty 69 P&L $-0.55
-Trade 6: CALL Strike $95,000 Qty 50 P&L $2.26
-Trade 7: PUT Strike $93,100 Qty 69 P&L $25.25
-Trade 8: PUT Strike $95,000 Qty 67 P&L $-3.59
-Trade 9: CALL Strike $105,000 Qty 46 P&L $0.31
-Trade 10: PUT Strike $102,900 Qty 62 P&L $-14.10
-... and 439 more trades
+Trade 1: CALL Strike $95,950 Qty 509 P&L $-346.37
+Trade 2: PUT Strike $95,950 Qty 680 P&L $34.00
+Trade 3: PUT Strike $95,950 Qty 654 P&L $407.31
+Trade 4: PUT Strike $95,950 Qty 654 P&L $531.16
+Trade 5: PUT Strike $97,000 Qty 648 P&L $362.10
+Trade 6: PUT Strike $97,000 Qty 674 P&L $58.01
+Trade 7: PUT Strike $97,000 Qty 647 P&L $546.65
+Trade 8: PUT Strike $99,000 Qty 653 P&L $112.91
+Trade 9: PUT Strike $99,000 Qty 630 P&L $579.03
+Trade 10: CALL Strike $101,000 Qty 484 P&L $79.35
+... and 521 more trades
 
 EXECUTION INFO
 ------------------------------
-Run at: 2026-08-24T20:45:24.168518
+Run at: 2026-08-30T19:31:08.432181
 Data Range: 2025-01-02T09:30:00 to 2026-01-01T01:30:00

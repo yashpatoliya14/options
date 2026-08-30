@@ -72,9 +72,9 @@ def fetch_underlying_candles(start_ts: int, end_ts: int, resolution: str = "2h")
     return candles
 
 
-def run_backtest(candles: List[Candle], data_mode: str, cfg, initial_margin: float = 1000.0) -> dict:
+def run_backtest(candles: List[Candle], data_mode: str, cfg, initial_margin: float = 1000.0, leverage: float = 1.0) -> dict:
     if not candles:
-        return summarize([], data_mode, cfg, initial_margin)
+        return summarize([], data_mode, cfg, initial_margin, leverage)
 
     events: List[EngineEvent] = []
 
@@ -127,10 +127,10 @@ def run_backtest(candles: List[Candle], data_mode: str, cfg, initial_margin: flo
     broker.set_clock(candles[-1].timestamp)
     engine.finalize(candles[-1].timestamp)
 
-    return summarize(events, data_mode, cfg, initial_margin)
+    return summarize(events, data_mode, cfg, initial_margin, leverage)
 
 
-def summarize(events: List[EngineEvent], data_mode: str, cfg, initial_margin: float = 1000.0) -> dict:
+def summarize(events: List[EngineEvent], data_mode: str, cfg, initial_margin: float = 1000.0, leverage: float = 1.0) -> dict:
     trades = []
     open_trade = None
     for e in events:
@@ -187,12 +187,46 @@ def summarize(events: List[EngineEvent], data_mode: str, cfg, initial_margin: fl
         if e.payload.get("best_premium_seen") is not None
     ]
 
+    # --- Leverage-aware equity curve ---
+    # With leverage, your actual capital is `initial_margin` but you control
+    # `initial_margin * leverage` worth of effective margin. The per-trade PnL
+    # is already computed using the leveraged position size (because margin_budget
+    # is set to initial_margin * leverage). We track how the ACTUAL capital
+    # (initial_margin) changes and detect liquidation (equity <= 0).
+    effective_margin = initial_margin * leverage
     equity_curve = []
-    running = initial_margin
-    for t in trades:
+    running = initial_margin  # Your real money
+    liquidated = False
+    liquidation_trade_index = None
+    
+    for i, t in enumerate(trades):
+        if liquidated:
+            # After liquidation, no more trades can happen
+            t["cumulative_pnl"] = 0.0
+            t["liquidated"] = True
+            continue
+            
         running += t["net_pnl"]
-        t["cumulative_pnl"] = round(running, 2)
-        equity_curve.append({"timestamp": t["exit_timestamp"], "equity": round(running, 2)})
+        
+        if running <= 0:
+            running = 0.0
+            liquidated = True
+            liquidation_trade_index = i
+            t["cumulative_pnl"] = 0.0
+            t["liquidated"] = True
+            t["exit_reason"] = "LIQUIDATED"
+            equity_curve.append({"timestamp": t["exit_timestamp"], "equity": 0.0})
+        else:
+            t["cumulative_pnl"] = round(running, 2)
+            t["liquidated"] = False
+            equity_curve.append({"timestamp": t["exit_timestamp"], "equity": round(running, 2)})
+
+    # Count only trades that actually executed (before liquidation)
+    active_trades = trades if not liquidated else trades[:liquidation_trade_index + 1]
+    active_total = len(active_trades)
+    active_wins = [t for t in active_trades if t["net_pnl"] > 0]
+    active_losses = [t for t in active_trades if t["net_pnl"] <= 0]
+    active_net_pnl = sum(t["net_pnl"] for t in active_trades)
 
     # max drawdown
     peak = float("-inf")
@@ -217,8 +251,14 @@ def summarize(events: List[EngineEvent], data_mode: str, cfg, initial_margin: fl
     monthly_pnl = {}
     import datetime
     for t in trades:
+        if t.get("liquidated") and t["cumulative_pnl"] == 0.0 and t != active_trades[-1] if active_trades else True:
+            continue  # Skip post-liquidation phantom trades
         month = datetime.datetime.fromtimestamp(t["exit_timestamp"], datetime.UTC).strftime("%Y-%m")
         monthly_pnl[month] = round(monthly_pnl.get(month, 0.0) + t["net_pnl"], 2)
+
+    # Compute final equity and return on actual capital
+    final_equity = running
+    total_return_pct = ((final_equity - initial_margin) / initial_margin * 100) if initial_margin > 0 else 0.0
 
     summary = {
         "data_mode": data_mode,
@@ -229,7 +269,17 @@ def summarize(events: List[EngineEvent], data_mode: str, cfg, initial_margin: fl
             "historical bid/ask data. Treat P&L figures as directional/illustrative "
             "only, not a reliable estimate of real trading results."
         ),
+        # --- Leverage info ---
+        "leverage": leverage,
+        "initial_capital": round(initial_margin, 2),
+        "effective_margin": round(effective_margin, 2),
+        "final_equity": round(final_equity, 2),
+        "total_return_pct": round(total_return_pct, 2),
+        "liquidated": liquidated,
+        "liquidation_trade_index": liquidation_trade_index,
+        # --- Standard stats ---
         "total_trades": total,
+        "trades_before_liquidation": active_total if liquidated else total,
         "winning_trades": len(wins),
         "losing_trades": len(losses),
         "win_rate_pct": round(100 * len(wins) / total, 2) if total else 0.0,
@@ -302,6 +352,22 @@ def print_beautiful_output(result: dict) -> None:
         console.print(table)
     
     # Print Summary Panel
+    # --- Leverage Panel ---
+    leverage = summary.get('leverage', 1.0)
+    if leverage > 1:
+        lev_color = "red bold" if summary.get('liquidated') else "green bold"
+        lev_text = (
+            f"[bold]Leverage:[/bold] {leverage:.0f}x\n"
+            f"[bold]Initial Capital:[/bold] ${summary['initial_capital']:,.2f}\n"
+            f"[bold]Effective Margin (Capital × Leverage):[/bold] ${summary['effective_margin']:,.2f}\n"
+            f"[bold]Final Equity:[/bold] [{lev_color}]${summary['final_equity']:,.2f}[/{lev_color}]\n"
+            f"[bold]Total Return on Capital:[/bold] [{lev_color}]{summary['total_return_pct']:+.2f}%[/{lev_color}]"
+        )
+        if summary.get('liquidated'):
+            lev_text += f"\n[red bold]⚠ LIQUIDATED at trade #{summary['liquidation_trade_index'] + 1} -- equity hit zero![/red bold]"
+            lev_text += f"\n[yellow]Trades executed before liquidation: {summary['trades_before_liquidation']}[/yellow]"
+        console.print(Panel(lev_text, title="💰 Leverage Summary", border_style="yellow", expand=False))
+
     summary_text = (
         f"[bold]Total Trades:[/bold] {summary['total_trades']} "
         f"([green]W: {summary['winning_trades']}[/green] | [red]L: {summary['losing_trades']}[/red])\n"
@@ -320,7 +386,7 @@ def print_beautiful_output(result: dict) -> None:
     console.print(Panel(summary_text, title="Backtest Summary", border_style="blue", expand=False))
 
 
-def run_year_backtest(year: int, initial_capital: float, cfg, data_mode: str = "reconstructed") -> dict:
+def run_year_backtest(year: int, initial_capital: float, cfg, data_mode: str = "reconstructed", leverage: float = 1.0) -> dict:
     """
     Run backtest for a specific year.
     
@@ -329,6 +395,7 @@ def run_year_backtest(year: int, initial_capital: float, cfg, data_mode: str = "
         initial_capital: Initial capital in USD
         cfg: The strategy configuration to use
         data_mode: 'reconstructed' or 'realistic'
+        leverage: Leverage multiplier (e.g. 100 = 100x). Capital * leverage = effective margin.
         
     Returns:
         Backtest results dictionary
@@ -350,6 +417,8 @@ def run_year_backtest(year: int, initial_capital: float, cfg, data_mode: str = "
     console = Console()
     console.print(f"[cyan]Running {year} backtest from {start_date.date()} to {end_date.date()}[/cyan]")
     console.print(f"[cyan]Initial Capital: ${initial_capital:,.2f}[/cyan]")
+    if leverage > 1:
+        console.print(f"[yellow]Leverage: {leverage:.0f}x → Effective Margin: ${initial_capital * leverage:,.2f}[/yellow]")
     console.print(f"[cyan]Data Mode: {data_mode}[/cyan]")
     
     # Display fee information
@@ -369,17 +438,17 @@ def run_year_backtest(year: int, initial_capital: float, cfg, data_mode: str = "
         
     console.print(f"[green]Loaded {len(candles)} 3h candles for {year}.[/green]")
     
-    # Run backtest
-    result = run_backtest(candles, data_mode, cfg, initial_capital)
+    # Run backtest with leverage
+    result = run_backtest(candles, data_mode, cfg, initial_capital, leverage)
     
     # Save results
-    save_backtest_results(year, result, initial_capital, cfg, data_mode, fee_rate)
+    save_backtest_results(year, result, initial_capital, cfg, data_mode, fee_rate, leverage)
     
     return result
 
 
 def save_backtest_results(year: int, result: dict, initial_capital: float, cfg,
-                          data_mode: str, fee_rate: float):
+                          data_mode: str, fee_rate: float, leverage: float = 1.0):
     """
     Save backtest results to organized directory structure.
     """
@@ -396,6 +465,8 @@ def save_backtest_results(year: int, result: dict, initial_capital: float, cfg,
     metadata = {
         "year": year,
         "initial_capital": initial_capital,
+        "leverage": leverage,
+        "effective_margin": initial_capital * leverage,
         "data_mode": data_mode,
         "fee_rate": fee_rate,
         "fee_source": "Delta Exchange API (from diagnostic report)",
@@ -489,11 +560,17 @@ def generate_text_report(year: int, result: dict, metadata: dict, filepath: str)
         f.write("CAPITAL SUMMARY\n")
         f.write("-" * 30 + "\n")
         f.write(f"Initial Capital: ${metadata['initial_capital']:,.2f}\n")
+        if metadata.get('leverage', 1) > 1:
+            f.write(f"Leverage: {metadata['leverage']:.0f}x\n")
+            f.write(f"Effective Margin: ${metadata['effective_margin']:,.2f}\n")
         if trades:
-            final_equity = trades[-1].get("cumulative_pnl", metadata["initial_capital"])
+            final_equity = summary.get('final_equity', trades[-1].get("cumulative_pnl", metadata["initial_capital"]))
             f.write(f"Final Capital: ${final_equity:,.2f}\n")
             f.write(f"Net P&L: ${summary.get('net_pnl', 0):,.2f}\n")
-            f.write(f"Return: {summary.get('net_pnl', 0)/metadata['initial_capital']*100:.2f}%\n")
+            return_pct = summary.get('total_return_pct', summary.get('net_pnl', 0)/metadata['initial_capital']*100)
+            f.write(f"Return on Capital: {return_pct:.2f}%\n")
+            if summary.get('liquidated'):
+                f.write(f"*** LIQUIDATED at trade #{summary['liquidation_trade_index'] + 1} ***\n")
         f.write("\n")
         
         f.write("TRADING STATISTICS\n")
@@ -525,7 +602,7 @@ def generate_text_report(year: int, result: dict, metadata: dict, filepath: str)
         f.write(f"Data Range: {metadata['data_range']['start']} to {metadata['data_range']['end']}\n")
 
 
-def compare_years(years: list, initial_capital: float, cfg, data_mode: str = "reconstructed"):
+def compare_years(years: list, initial_capital: float, cfg, data_mode: str = "reconstructed", leverage: float = 1.0):
     """
     Compare backtest results across multiple years.
     """
@@ -534,44 +611,51 @@ def compare_years(years: list, initial_capital: float, cfg, data_mode: str = "re
     results = {}
     for year in years:
         console.print(f"\n[cyan]Running {year} backtest...[/cyan]")
-        result = run_year_backtest(year, initial_capital, cfg, data_mode)
+        result = run_year_backtest(year, initial_capital, cfg, data_mode, leverage)
         results[year] = result
         
     # Display comparison table
-    table = Table(title=f"Year-by-Year Comparison (Initial Capital: ${initial_capital:,.2f})")
+    title_suffix = f" | {leverage:.0f}x Leverage" if leverage > 1 else ""
+    table = Table(title=f"Year-by-Year Comparison (Capital: ${initial_capital:,.2f}{title_suffix})")
     table.add_column("Year", style="cyan")
-    table.add_column("Initial", justify="right")
+    table.add_column("Capital", justify="right")
+    if leverage > 1:
+        table.add_column("Eff. Margin", justify="right")
     table.add_column("Final", justify="right")
     table.add_column("Net P&L", justify="right")
     table.add_column("Return %", justify="right")
     table.add_column("Win Rate %", justify="right")
     table.add_column("Max DD", justify="right")
     table.add_column("Trades", justify="right")
+    if leverage > 1:
+        table.add_column("Liquidated?", justify="center")
     
     for year in years:
         if year in results:
             summary = results[year]["summary"]
-            trades = results[year]["trades"]
             
-            if trades:
-                final_equity = trades[-1].get("cumulative_pnl", initial_capital)
-                net_pnl = summary.get("net_pnl", 0)
-                return_pct = (net_pnl / initial_capital) * 100 if initial_capital > 0 else 0
-            else:
-                final_equity = initial_capital
-                net_pnl = 0
-                return_pct = 0
+            final_equity = summary.get("final_equity", initial_capital)
+            net_pnl = summary.get("net_pnl", 0)
+            return_pct = summary.get("total_return_pct", 0)
+            liq_status = "💀 YES" if summary.get("liquidated") else "✅ No"
                 
-            table.add_row(
+            row = [
                 str(year),
                 f"${initial_capital:,.0f}",
+            ]
+            if leverage > 1:
+                row.append(f"${initial_capital * leverage:,.0f}")
+            row.extend([
                 f"${final_equity:,.0f}",
                 f"${net_pnl:,.0f}",
                 f"{return_pct:.1f}%",
                 f"{summary.get('win_rate_pct', 0):.1f}%",
                 f"${summary.get('max_drawdown', 0):,.0f}",
-                str(summary.get('total_trades', 0))
-            )
+                str(summary.get('total_trades', 0)),
+            ])
+            if leverage > 1:
+                row.append(liq_status)
+            table.add_row(*row)
             
     console.print(table)
     
@@ -579,6 +663,8 @@ def compare_years(years: list, initial_capital: float, cfg, data_mode: str = "re
     import json
     comparison = {
         "initial_capital": initial_capital,
+        "leverage": leverage,
+        "effective_margin": initial_capital * leverage,
         "data_mode": data_mode,
         "years": years,
         "results": {year: results[year]["summary"] for year in years if year in results}
@@ -600,6 +686,8 @@ def main():
     parser.add_argument("--mode", choices=["reconstructed", "realistic"], default="reconstructed",
                         help="Data mode: reconstructed (theoretical) or realistic (historical)")
     parser.add_argument("--capital", type=float, help="Initial capital amount")
+    parser.add_argument("--leverage", type=float, default=100.0,
+                        help="Leverage multiplier (default: 100x). Your capital * leverage = effective margin used for position sizing.")
     parser.add_argument("--compare", action="store_true", help="Compare multiple years")
     parser.add_argument("--min-premium", type=float, default=None,
                         help="Override MIN_PREMIUM for this run only.")
@@ -615,9 +703,16 @@ def main():
             console.print("[red]Invalid capital input. Using default: $10,000[/red]")
             initial_capital = 10000.0
             
-    # Handle overrides including the margin_budget_usd fixed to initial_capital
+    leverage = args.leverage
+    if leverage < 1:
+        console.print("[red]Leverage must be >= 1. Using 1x (no leverage).[/red]")
+        leverage = 1.0
+    
+    # Handle overrides including the margin_budget_usd fixed to initial_capital * leverage
+    # With leverage, your effective margin is capital * leverage (e.g. ₹1000 * 100x = ₹100,000)
+    effective_margin = initial_capital * leverage
     cfg = CONFIG if args.min_premium is None else replace(CONFIG, min_premium_usd=args.min_premium)
-    cfg = replace(cfg, margin_budget_usd=initial_capital)
+    cfg = replace(cfg, margin_budget_usd=effective_margin)
     
     # Determine which years to backtest
     if args.year:
@@ -659,6 +754,8 @@ def main():
             years = [2024]
     
     console.print(f"\n[green]Initial Capital: ${initial_capital:,.2f}[/green]")
+    if leverage > 1:
+        console.print(f"[yellow]Leverage: {leverage:.0f}x → Effective Margin: ${effective_margin:,.2f}[/yellow]")
     console.print(f"[green]Selected Years: {years}[/green]")
     
     # Warn about realistic mode
@@ -668,7 +765,7 @@ def main():
     
     # Run backtests
     if len(years) == 1:
-        result = run_year_backtest(years[0], initial_capital, cfg, args.mode)
+        result = run_year_backtest(years[0], initial_capital, cfg, args.mode, leverage)
         print_beautiful_output(result)
         
         if result["summary"]["total_trades"] == 0:
@@ -680,7 +777,7 @@ def main():
                     f"Try lowering --min-premium for reconstructed-mode tests.[/yellow]"
                 )
     else:
-        compare_years(years, initial_capital, cfg, args.mode)
+        compare_years(years, initial_capital, cfg, args.mode, leverage)
 
 
 if __name__ == "__main__":

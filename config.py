@@ -61,12 +61,10 @@ class StrategyConfig:
     contract_value_underlying: float = _float_env("CONTRACT_VALUE_UNDERLYING", 0.001)
 
     # --- Risk / sizing ---
-    # Confirmed: margin-budget sizing. The engine computes the max number of
-    # lots that fit within this margin budget for the selected contract,
-    # using Delta's live/estimated margin requirement per lot.
+    # Balance available for margin (set by backtest from capital * leverage)
     margin_budget_usd: float = _float_env("MARGIN_BUDGET_USD", 50.0)
-    max_position_size: int = _int_env("MAX_POSITION_SIZE", 0)  # 0 = unbounded by count, margin budget governs
-    max_margin_usage_usd: float = _float_env("MAX_MARGIN_USAGE", 0.0)  # 0 = use margin_budget_usd only
+    # Fixed lot size per trade -- every trade uses exactly this many lots
+    fixed_lot_size: int = _int_env("FIXED_LOT_SIZE", 5)
     max_daily_loss_usd: float = _float_env("MAX_DAILY_LOSS", 0.0)  # 0 = disabled
     max_open_positions: int = _int_env("MAX_OPEN_POSITIONS", 1)
     slippage_pct: float = _float_env("SLIPPAGE_PCT", 0.5)  # % of premium, applied against the trader

@@ -1,6 +1,6 @@
 {
   "year": 2025,
-  "initial_capital": 1000.0,
+  "initial_capital": 10000.0,
   "data_mode": "reconstructed",
   "fee_rate": 0.0001,
   "fee_source": "Delta Exchange API (from diagnostic report)",
@@ -9,10 +9,10 @@
     "supertrend_atr_period": 16,
     "supertrend_multiplier": 1.5,
     "min_premium_usd": 250.0,
-    "margin_budget_usd": 1000.0,
+    "margin_budget_usd": 10000.0,
     "contract_value_underlying": 0.001
   },
-  "execution_timestamp": "2026-08-24T20:45:24.168518",
+  "execution_timestamp": "2026-08-30T19:31:08.432181",
   "data_range": {
     "start": "2025-01-02T09:30:00",
     "end": "2026-01-01T01:30:00"
