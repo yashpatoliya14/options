@@ -1,3 +1,5 @@
 .env
 __pycache__/
 backtest_charts
+.pytest_cache/
+pytest-cache-files-*/
