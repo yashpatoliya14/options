@@ -81,10 +81,18 @@ def run_live():
     print(f"Execution: Hold to Expiry (TP: {params.tp_pct*100}%, SL: {params.sl_pct*100}%)")
     print(f"Polling Delta Exchange every {poll_seconds} seconds.")
     
+    send_telegram_message(
+        f"🚀 **Live Trading Algorithm Started!**\n\n"
+        f"📊 **Strategy:** EMA {params.ema_fast}/{params.ema_slow} (ADX > {params.adx_min})\n"
+        f"🎯 **Execution:** Hold to Expiry\n"
+        f"⏳ **Polling:** {poll_seconds}s"
+    )
+    
     try:
         runner.run_forever()
     except KeyboardInterrupt:
         print("\nLive trading stopped by user.")
+        send_telegram_message("🛑 **Live Trading Algorithm Stopped manually.**")
 
 if __name__ == "__main__":
     run_live()

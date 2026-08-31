@@ -93,7 +93,21 @@ class LiveRunner:
         )
         self._save_position()
         if self.notify_fn:
-            self.notify_fn(f"🟢 OPEN {candidate.direction.upper()} SPREAD\nExpiry: {candidate.expiry_label}\nStrikes: {candidate.short_leg.strike} / {candidate.long_leg.strike}\nCredit: ${fill.entry_or_exit_credit:.2f}")
+            direction_label = f"{candidate.direction.upper()} PUT" if candidate.direction == "bull" else f"{candidate.direction.upper()} CALL"
+            msg = (
+                f"🟢 OPEN {direction_label} SPREAD\n"
+                f"Underlying: {self.params.underlying}\n"
+                f"Status: FILLED\n\n"
+                f"Legs:\n"
+                f"🔴 SELL {candidate.short_leg.qty}x {candidate.short_leg.symbol}\n"
+                f"🟢 BUY {candidate.long_leg.qty}x {candidate.long_leg.symbol}\n\n"
+                f"Trade Details:\n"
+                f"Expiry: {candidate.expiry} ({candidate.expiry_label})\n"
+                f"Spread Width: ${candidate.width:.2f}\n"
+                f"Net Credit: ${fill.entry_or_exit_credit:.2f}\n"
+                f"Commission: ${fill.commission:.2f}"
+            )
+            self.notify_fn(msg)
 
     def _close_position(self, timestamp: datetime, reason: ExitReason) -> None:
         if self.position is None:
@@ -124,7 +138,21 @@ class LiveRunner:
         
         if self.notify_fn:
             emoji = "✅" if trade.realized_pnl > 0 else "❌"
-            self.notify_fn(f"{emoji} CLOSE {trade.direction.upper()} SPREAD\nReason: {reason}\nRealized PnL: ${trade.realized_pnl:.2f}")
+            direction_label = f"{trade.direction.upper()} PUT" if trade.direction == "bull" else f"{trade.direction.upper()} CALL"
+            msg = (
+                f"{emoji} CLOSE {direction_label} SPREAD\n"
+                f"Status: FILLED\n"
+                f"Reason: {reason}\n\n"
+                f"Legs:\n"
+                f"🟢 BUY {position.short_leg.qty}x {position.short_leg.symbol}\n"
+                f"🔴 SELL {position.long_leg.qty}x {position.long_leg.symbol}\n\n"
+                f"Trade Details:\n"
+                f"Exit Credit: ${fill.entry_or_exit_credit:.2f}\n"
+                f"Slippage: ${fill.slippage:.2f}\n"
+                f"Commission: ${fill.commission:.2f}\n"
+                f"Realized PnL: ${trade.realized_pnl:.2f}"
+            )
+            self.notify_fn(msg)
 
     def _save_position(self) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
