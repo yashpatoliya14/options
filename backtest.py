@@ -3,12 +3,18 @@ import pandas as pd
 from engine import StrategyEngine, StrategyParams
 from backtest import BacktestRunner, HistoricalDataProvider, SimulatedClock, SimulatedExecutor
 
+from dotenv import load_dotenv
+
 def run_backtest_and_report():
     print("Setting up backtest...")
     csv_path = "data/BTCUSD_5m.csv"
     if not os.path.exists(csv_path):
         print(f"Error: {csv_path} not found.")
         return
+
+    load_dotenv()
+    env_qty = os.getenv("TRADE_QTY")
+    qty = int(env_qty) if env_qty else 1
 
     # Use parameters that match the generated strike_step of 600
     params = StrategyParams(
@@ -20,7 +26,7 @@ def run_backtest_and_report():
         spread_width=600,
         tp_pct=1.00,
         sl_pct=100.0,
-        qty=1,
+        qty=qty,
         slippage_pct=0.0025,
         commission_per_leg=0,
         cooldown_seconds=7200,

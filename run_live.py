@@ -26,6 +26,13 @@ def run_live():
     with open(config_path, "r", encoding="utf-8") as f:
         config_data = yaml.safe_load(f)
 
+    env_qty = os.getenv("TRADE_QTY")
+    if env_qty:
+        try:
+            config_data["qty"] = int(env_qty)
+        except ValueError:
+            print(f"Warning: Invalid TRADE_QTY in environment: {env_qty}")
+
     # Convert yaml config to StrategyParams
     params = StrategyParams().overlay(config_data)
 
