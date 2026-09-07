@@ -148,16 +148,7 @@ class StrategyEngine:
         position: SpreadPosition,
         current_mark: float,
     ) -> Literal["profit_target", "stop_loss"] | None:
-        if position.entry_credit == 0:
-            return None
-        
-        # PnL percentage relative to the initial entry value (absolute value of entry credit)
-        pnl_pct = (position.entry_credit - current_mark) / abs(position.entry_credit)
-        
-        if pnl_pct >= self.params.tp_pct:
-            return "profit_target"
-        if pnl_pct <= -self.params.sl_pct:
-            return "stop_loss"
+        # Take Profit and Stop Loss completely disabled
         return None
 
     def should_time_exit(self, position: SpreadPosition, now: datetime) -> bool:
