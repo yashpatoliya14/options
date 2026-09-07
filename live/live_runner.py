@@ -61,12 +61,14 @@ class LiveRunner:
         if signal is None:
             return
 
+        signal_cut = False
         if self.position is not None:
             if not self.engine.should_cut_and_reenter(self.position, signal):
                 return
             self._close_position(signal.timestamp, "signal_cut")
+            signal_cut = True
 
-        if self._last_close_time is not None and self.engine.apply_cooldown(
+        if not signal_cut and self._last_close_time is not None and self.engine.apply_cooldown(
             self._last_close_time,
             signal.timestamp,
         ):

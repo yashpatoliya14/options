@@ -21,7 +21,7 @@ def _candles(closes, adx=30.0):
 
 
 def test_bullish_crossover_on_latest_closed_bar():
-    params = StrategyParams(ema_fast=2, ema_slow=4)
+    params = StrategyParams(ema_fast=2, ema_slow=4, spread_type='credit')
     engine = StrategyEngine(params)
 
     signal = engine.detect_crossover(_candles([10, 9, 8, 7, 12]))
@@ -32,7 +32,7 @@ def test_bullish_crossover_on_latest_closed_bar():
 
 
 def test_bearish_crossover_on_latest_closed_bar():
-    params = StrategyParams(ema_fast=2, ema_slow=4)
+    params = StrategyParams(ema_fast=2, ema_slow=4, spread_type='credit')
     engine = StrategyEngine(params)
 
     signal = engine.detect_crossover(_candles([10, 11, 12, 13, 8]))

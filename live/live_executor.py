@@ -22,7 +22,7 @@ class LiveExecutor(OrderExecutor):
             stop_id = self._place_exchange_stop(short_leg)
             short_price = float(short_fill.get("average_fill_price", self.provider.get_quote(short_leg.symbol)["mark"]))
             long_price = float(long_fill.get("average_fill_price", self.provider.get_quote(long_leg.symbol)["mark"]))
-            credit = max(short_price - long_price, 0.0)
+            credit = short_price - long_price
             return FillResult(
                 ok=True,
                 entry_or_exit_credit=credit,
@@ -50,7 +50,7 @@ class LiveExecutor(OrderExecutor):
             )
             short_price = float(short_close.get("average_fill_price", self.provider.get_quote(position.short_leg.symbol)["mark"]))
             long_price = float(long_close.get("average_fill_price", self.provider.get_quote(position.long_leg.symbol)["mark"]))
-            debit = max(short_price - long_price, 0.0)
+            debit = short_price - long_price
             return FillResult(
                 ok=True,
                 entry_or_exit_credit=debit,
@@ -72,7 +72,7 @@ class LiveExecutor(OrderExecutor):
     def mark_to_market(self, position: SpreadPosition) -> float:
         short_mark = float(self.provider.get_quote(position.short_leg.symbol)["mark"])
         long_mark = float(self.provider.get_quote(position.long_leg.symbol)["mark"])
-        return max(short_mark - long_mark, 0.0)
+        return short_mark - long_mark
 
     def _place_order(self, symbol: str, qty: int, side: str, reduce_only: bool) -> dict:
         body = {

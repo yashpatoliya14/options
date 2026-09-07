@@ -32,7 +32,7 @@ def _chain(expiry, option_type, rows, spot=1000):
 
 
 def test_zero_dte_in_band_wins_before_next_day():
-    params = StrategyParams(credit_min=150, credit_max=200, spread_width=100, qty=3)
+    params = StrategyParams(credit_min=150, credit_max=200, spread_width=100, qty=3, spread_type='credit')
     engine = StrategyEngine(params)
     chains = {
         "2026-01-01": _chain("2026-01-01", "put", [(900, 250), (800, 70)]),
@@ -51,7 +51,7 @@ def test_zero_dte_in_band_wins_before_next_day():
 
 
 def test_next_day_used_when_zero_dte_has_no_valid_credit():
-    params = StrategyParams(credit_min=150, credit_max=200, spread_width=100)
+    params = StrategyParams(credit_min=150, credit_max=200, spread_width=100, spread_type='credit')
     engine = StrategyEngine(params)
     chains = {
         "2026-01-01": _chain("2026-01-01", "call", [(1100, 260), (1200, 40)]),
@@ -69,7 +69,7 @@ def test_next_day_used_when_zero_dte_has_no_valid_credit():
 
 
 def test_none_when_no_expiry_has_credit_in_band():
-    params = StrategyParams(credit_min=150, credit_max=200, spread_width=100)
+    params = StrategyParams(credit_min=150, credit_max=200, spread_width=100, spread_type='credit')
     engine = StrategyEngine(params)
     chains = {
         "2026-01-01": _chain("2026-01-01", "put", [(900, 300), (800, 40)]),

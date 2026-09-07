@@ -62,17 +62,21 @@ class BacktestRunner:
                 )
                 if close_reason is not None:
                     self._close_position(now, close_reason)
+                elif hasattr(self.engine, "should_time_exit") and self.engine.should_time_exit(self.position, now):
+                    self._close_position(now, "time_exit")
 
             signal = self.engine.detect_crossover(candles)
             if signal is None:
                 continue
 
+            signal_cut = False
             if self.position is not None:
                 if not self.engine.should_cut_and_reenter(self.position, signal):
                     continue
                 self._close_position(signal.timestamp, "signal_cut")
+                signal_cut = True
 
-            if self._last_close_time is not None and self.engine.apply_cooldown(
+            if not signal_cut and self._last_close_time is not None and self.engine.apply_cooldown(
                 self._last_close_time,
                 signal.timestamp,
             ):
@@ -88,7 +92,7 @@ class BacktestRunner:
             if candidate is None:
                 self.skipped_no_valid_credit += 1
                 continue
-            self._open_position(candidate, signal.timestamp)
+            self._open_position(candidate, signal.timestamp, signal)
 
         if self.position is not None:
             self.provider.clock.set(self.provider.candles.iloc[-1]["timestamp"].to_pydatetime())
@@ -101,7 +105,7 @@ class BacktestRunner:
             report=self._report(),
         )
 
-    def _open_position(self, candidate: SpreadCandidate, timestamp: datetime) -> None:
+    def _open_position(self, candidate: SpreadCandidate, timestamp: datetime, signal: Signal = None) -> None:
         fill = self.executor.open_spread(
             candidate.direction,
             candidate.short_leg,
@@ -110,10 +114,16 @@ class BacktestRunner:
         if not fill.ok or fill.entry_or_exit_credit is None:
             self.skipped_no_valid_credit += 1
             return
+            
+        signal_type = signal.signal_type if signal and getattr(signal, "signal_type", None) else candidate.direction
+        expiry_type = self.engine.get_expiry_type(timestamp) if hasattr(self.engine, "get_expiry_type") else "unknown"
+            
         self.position = SpreadPosition.from_candidate(
             candidate,
             entry_time=timestamp,
             entry_credit=fill.entry_or_exit_credit,
+            signal_type=signal_type,
+            expiry_type=expiry_type,
         )
         self.executor.open_position = self.position
         self._entry_costs[id(self.position)] = (fill.slippage, fill.commission)
@@ -132,6 +142,7 @@ class BacktestRunner:
             (position.entry_credit - fill.entry_or_exit_credit) * position.qty
             - total_commission
         )
+        duration = (timestamp - position.entry_time).total_seconds() / 60.0
         self.trades.append(
             TradeRecord(
                 entry_time=position.entry_time,
@@ -147,6 +158,10 @@ class BacktestRunner:
                 slippage=total_slippage,
                 commission=total_commission,
                 data_mode=self.params.option_data_mode,
+                underlying=self.params.underlying,
+                signal_type=getattr(position, "signal_type", position.direction),
+                expiry_type=getattr(position, "expiry_type", "unknown"),
+                trade_duration_minutes=duration,
             )
         )
         self.position = None

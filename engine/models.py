@@ -7,7 +7,9 @@ Direction = Literal["bull", "bear"]
 OptionType = Literal["put", "call"]
 Side = Literal["buy", "sell"]
 ExpiryLabel = Literal["0dte", "next_day"]
-ExitReason = Literal["profit_target", "stop_loss", "signal_cut", "expired", "cooldown_skip"]
+ExpiryType = Literal["same_day", "next_day"]
+SignalType = Literal["buy", "sell"]
+ExitReason = Literal["profit_target", "stop_loss", "signal_cut", "expired", "cooldown_skip", "time_exit"]
 
 
 @dataclass(frozen=True)
@@ -17,6 +19,9 @@ class Signal:
     fast_ema: float
     slow_ema: float
     adx: float | None = None
+    rsi: float | None = None
+    ema_trend: str | None = None       # "bullish_structure" / "bearish_structure"
+    signal_type: str | None = None     # "buy" / "sell"
 
 
 @dataclass(frozen=True)
@@ -54,6 +59,8 @@ class SpreadPosition:
     entry_credit: float
     qty: int
     stop_order_id: str | None = None
+    signal_type: str | None = None        # "buy" / "sell"
+    expiry_type: str | None = None        # "same_day" / "next_day"
 
     @classmethod
     def from_candidate(
@@ -62,6 +69,8 @@ class SpreadPosition:
         entry_time: datetime,
         entry_credit: float | None = None,
         stop_order_id: str | None = None,
+        signal_type: str | None = None,
+        expiry_type: str | None = None,
     ) -> "SpreadPosition":
         return cls(
             direction=candidate.direction,
@@ -75,6 +84,8 @@ class SpreadPosition:
             entry_credit=candidate.net_credit if entry_credit is None else entry_credit,
             qty=candidate.short_leg.qty,
             stop_order_id=stop_order_id,
+            signal_type=signal_type,
+            expiry_type=expiry_type,
         )
 
 
@@ -103,6 +114,10 @@ class TradeRecord:
     slippage: float
     commission: float
     data_mode: str
+    underlying: str = "BTC"
+    signal_type: str = "buy"
+    expiry_type: str = "same_day"
+    trade_duration_minutes: float = 0.0
 
 
 @dataclass(frozen=True)

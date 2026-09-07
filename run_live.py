@@ -84,14 +84,14 @@ def run_live():
     )
 
     print(f"Starting LiveRunner...")
-    print(f"Strategy: EMA {params.ema_fast}/{params.ema_slow} | Trend ADX > {params.adx_min}")
-    print(f"Execution: Hold to Expiry (TP: {params.tp_pct*100}%, SL: {params.sl_pct*100}%)")
+    print(f"Strategy: EMA {params.ema_trend_fast}/{params.ema_trend_slow} | Trend ADX > {params.adx_trend_threshold}")
+    print(f"Execution: TP: {params.tp_pct*100}%, SL: {params.sl_pct*100}% | Cutoff: {params.early_exit_minutes}min")
     print(f"Polling Delta Exchange every {poll_seconds} seconds.")
     
     send_telegram_message(
         f"🚀 **Live Trading Algorithm Started!**\n\n"
-        f"📊 **Strategy:** EMA {params.ema_fast}/{params.ema_slow} (ADX > {params.adx_min})\n"
-        f"🎯 **Execution:** Hold to Expiry\n"
+        f"📊 **Strategy:** EMA {params.ema_trend_fast}/{params.ema_trend_slow} (ADX > {params.adx_trend_threshold})\n"
+        f"🎯 **Execution:** TP: {params.tp_pct*100}%, SL: {params.sl_pct*100}%\n"
         f"⏳ **Polling:** {poll_seconds}s"
     )
     

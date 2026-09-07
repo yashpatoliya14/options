@@ -25,7 +25,7 @@ def _signal(direction):
 
 
 def test_profit_target_stop_loss_and_hold():
-    engine = StrategyEngine(StrategyParams(tp_pct=0.50, sl_pct=2.0))
+    engine = StrategyEngine(StrategyParams(tp_pct=0.50, sl_pct=1.0))
     position = _position(entry_credit=180)
 
     assert engine.should_close(position, current_mark=90) == "profit_target"

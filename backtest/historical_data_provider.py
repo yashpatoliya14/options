@@ -10,6 +10,20 @@ from engine import StrategyParams
 from engine.interfaces import Clock, DataProvider
 
 
+# Asset-specific implied volatilities for Black-Scholes reconstruction
+ASSET_IV_DEFAULTS = {
+    "BTC": 0.55,
+    "ETH": 0.65,
+    "XAUT": 0.25,
+}
+
+# Asset-specific strike step overrides
+ASSET_STRIKE_STEPS = {
+    "XAUT": 5.0,    # Gold ~$2600, step=$5
+    "ETH": 25.0,    # ETH ~$2500, step=$25
+}
+
+
 class SimulatedClock(Clock):
     def __init__(self, start: datetime):
         self._now = self._as_utc(start)
@@ -54,6 +68,13 @@ class HistoricalDataProvider(DataProvider):
         self._timestamp_series = self.candles["timestamp"]
         self.last_candle_query_max_timestamp: datetime | None = None
 
+        # Resolve asset-specific IV
+        underlying = params.underlying.upper()
+        self._effective_iv = ASSET_IV_DEFAULTS.get(underlying, params.assumed_iv)
+        if params.assumed_iv != 0.55:
+            # User explicitly set IV, respect it
+            self._effective_iv = params.assumed_iv
+
     @classmethod
     def from_csv(
         cls,
@@ -85,7 +106,7 @@ class HistoricalDataProvider(DataProvider):
         spot = self._spot_as_of(now)
         expiry = self._expiry_datetime(expiry_date)
         t_years = max((expiry - now).total_seconds(), 0.0) / (365.0 * 24.0 * 3600.0)
-        step = self._strike_step(spot)
+        step = self._strike_step(spot, self.params.underlying)
         rows = []
 
         center = round(spot / step) * step
@@ -98,7 +119,7 @@ class HistoricalDataProvider(DataProvider):
                     spot=spot,
                     strike=strike,
                     t_years=t_years,
-                    iv=self.params.assumed_iv,
+                    iv=self._effective_iv,
                     rate=self.params.risk_free_rate,
                     option_type=option_type,
                 )
@@ -110,7 +131,7 @@ class HistoricalDataProvider(DataProvider):
                         "bid": max(mark * 0.995, 0.0),
                         "ask": mark * 1.005,
                         "mark": mark,
-                        "iv": self.params.assumed_iv,
+                        "iv": self._effective_iv,
                         "delta": None,
                         "gamma": None,
                         "theta": None,
@@ -132,7 +153,7 @@ class HistoricalDataProvider(DataProvider):
             spot=spot,
             strike=parsed["strike"],
             t_years=t_years,
-            iv=self.params.assumed_iv,
+            iv=self._effective_iv,
             rate=self.params.risk_free_rate,
             option_type=parsed["option_type"],
         )
@@ -167,7 +188,11 @@ class HistoricalDataProvider(DataProvider):
         )
 
     @staticmethod
-    def _strike_step(spot: float) -> float:
+    def _strike_step(spot: float, underlying: str = "BTC") -> float:
+        """Calculate strike step, with asset-specific overrides."""
+        upper = underlying.upper()
+        if upper in ASSET_STRIKE_STEPS:
+            return ASSET_STRIKE_STEPS[upper]
         return float(max(round(spot * 0.01 / 50.0) * 50, 50))
 
     @staticmethod

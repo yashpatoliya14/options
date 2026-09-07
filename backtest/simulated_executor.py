@@ -13,9 +13,9 @@ class SimulatedExecutor(OrderExecutor):
     def open_spread(self, direction: str, short_leg: Leg, long_leg: Leg) -> FillResult:
         short_mark = float(self.provider.get_quote(short_leg.symbol)["mark"])
         long_mark = float(self.provider.get_quote(long_leg.symbol)["mark"])
-        raw_credit = max(short_mark - long_mark, 0.0)
-        slippage = raw_credit * self.params.slippage_pct
-        credit = max(raw_credit - slippage, 0.0)
+        raw_credit = short_mark - long_mark
+        slippage = abs(raw_credit) * self.params.slippage_pct
+        credit = raw_credit - slippage
         commission = self._commission([short_leg, long_leg])
         return FillResult(
             ok=True,
@@ -28,7 +28,7 @@ class SimulatedExecutor(OrderExecutor):
 
     def close_spread(self, position: SpreadPosition) -> FillResult:
         mark = self.mark_to_market(position)
-        slippage = mark * self.params.slippage_pct
+        slippage = abs(mark) * self.params.slippage_pct
         debit = mark + slippage
         commission = self._commission([position.short_leg, position.long_leg])
         self.open_position = None
@@ -44,7 +44,7 @@ class SimulatedExecutor(OrderExecutor):
     def mark_to_market(self, position: SpreadPosition) -> float:
         short_mark = float(self.provider.get_quote(position.short_leg.symbol)["mark"])
         long_mark = float(self.provider.get_quote(position.long_leg.symbol)["mark"])
-        return max(short_mark - long_mark, 0.0)
+        return short_mark - long_mark
 
     def _commission(self, legs: list[Leg]) -> float:
         return sum(leg.qty for leg in legs) * self.params.commission_per_leg
