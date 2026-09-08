@@ -170,6 +170,16 @@ class BacktestRunner:
     def _report(self) -> dict:
         pnl = [trade.realized_pnl for trade in self.trades]
         wins = [value for value in pnl if value > 0]
+        
+        duration_days = 0.0
+        if not self.provider.candles.empty:
+            start_time = pd.Timestamp(self.provider.candles.iloc[0]["timestamp"])
+            end_time = pd.Timestamp(self.provider.candles.iloc[-1]["timestamp"])
+            duration_days = (end_time - start_time).total_seconds() / (24 * 3600)
+            
+        trades_per_day = len(self.trades) / duration_days if duration_days > 0 else 0.0
+        trades_per_month = trades_per_day * 30.44
+        trades_per_year = trades_per_day * 365.25
         losses = [value for value in pnl if value < 0]
         equity = []
         running = 0.0
@@ -190,6 +200,9 @@ class BacktestRunner:
             "max_drawdown": max_drawdown,
             "avg_win": (sum(wins) / len(wins)) if wins else 0.0,
             "avg_loss": (sum(losses) / len(losses)) if losses else 0.0,
+            "avg_trades_per_day": trades_per_day,
+            "avg_trades_per_month": trades_per_month,
+            "avg_trades_per_year": trades_per_year,
             "data_mode": self.params.option_data_mode,
             "equity_curve": equity,
         }

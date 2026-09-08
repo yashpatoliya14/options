@@ -121,6 +121,9 @@ def print_dashboard(result, symbol: str):
     print(f"{Fore.CYAN}{Style.BRIGHT}> OVERVIEW{Style.RESET_ALL}")
     print(f"  Asset:               {Fore.WHITE}{symbol}{Style.RESET_ALL}")
     print(f"  Total Trades:        {Fore.WHITE}{rep['trade_count']}{Style.RESET_ALL}")
+    print(f"  Trades / Day:        {Fore.WHITE}{rep['avg_trades_per_day']:.2f}{Style.RESET_ALL}")
+    print(f"  Trades / Month:      {Fore.WHITE}{rep['avg_trades_per_month']:.1f}{Style.RESET_ALL}")
+    print(f"  Trades / Year:       {Fore.WHITE}{rep['avg_trades_per_year']:.1f}{Style.RESET_ALL}")
     print(f"  Total PnL:           {Fore.GREEN if rep['total_pnl'] > 0 else Fore.RED}${rep['total_pnl']:.2f}{Style.RESET_ALL}")
     print(f"  Win Rate:            {Fore.WHITE}{rep['win_rate']*100:.2f}%{Style.RESET_ALL}")
     
