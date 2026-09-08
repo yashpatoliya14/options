@@ -68,7 +68,7 @@ def run_live():
             
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         try:
-            requests.post(url, json={"chat_id": chat_id, "text": message}, timeout=5)
+            requests.post(url, json={"chat_id": chat_id, "text": message, "parse_mode": "HTML"}, timeout=5)
         except Exception as e:
             print(f"Failed to send telegram message: {e}")
 
@@ -89,17 +89,17 @@ def run_live():
     print(f"Polling Delta Exchange every {poll_seconds} seconds.")
     
     send_telegram_message(
-        f"🚀 **Live Trading Algorithm Started!**\n\n"
-        f"📊 **Strategy:** EMA {params.ema_trend_fast}/{params.ema_trend_slow} (ADX > {params.adx_trend_threshold})\n"
-        f"🎯 **Execution:** Hold to Expiry\n"
-        f"⏳ **Polling:** {poll_seconds}s"
+        f"🚀 <b>Live Trading Algorithm Started!</b>\n\n"
+        f"📊 <b>Strategy:</b> EMA {params.ema_trend_fast}/{params.ema_trend_slow} (ADX > {params.adx_trend_threshold})\n"
+        f"🎯 <b>Execution:</b> Hold to Expiry\n"
+        f"⏳ <b>Polling:</b> {poll_seconds}s"
     )
     
     try:
         runner.run_forever()
     except KeyboardInterrupt:
         print("\nLive trading stopped by user.")
-        send_telegram_message("🛑 **Live Trading Algorithm Stopped manually.**")
+        send_telegram_message("🛑 <b>Live Trading Algorithm Stopped manually.</b>")
 
 if __name__ == "__main__":
     run_live()
