@@ -7,6 +7,8 @@ from statistics import NormalDist
 import pandas as pd
 
 from engine import StrategyParams
+from engine.black_scholes import greeks as bs_greeks, price as bs_price
+from engine.indicators import realized_vol, resolution_seconds
 from engine.interfaces import Clock, DataProvider
 
 
@@ -67,13 +69,20 @@ class HistoricalDataProvider(DataProvider):
         self.candles = self._normalize_candles(candles)
         self._timestamp_series = self.candles["timestamp"]
         self.last_candle_query_max_timestamp: datetime | None = None
+        self._bar_seconds = resolution_seconds(params.resolution)
 
         # Resolve asset-specific IV
         underlying = params.underlying.upper()
         self._effective_iv = ASSET_IV_DEFAULTS.get(underlying, params.assumed_iv)
         if params.assumed_iv != 0.55:
-            # User explicitly set IV, respect it
             self._effective_iv = params.assumed_iv
+
+        periods_per_year = int((365 * 24 * 3600) / max(self._bar_seconds, 1))
+        self.candles["realized_vol"] = realized_vol(
+            self.candles["close"],
+            params.rv_window,
+            periods_per_year,
+        )
 
     @classmethod
     def from_csv(
@@ -90,16 +99,22 @@ class HistoricalDataProvider(DataProvider):
 
     def get_candles(self, symbol: str, resolution: str, lookback: int) -> pd.DataFrame:
         now = self.clock.now()
-        idx = self._timestamp_series.searchsorted(pd.Timestamp(now), side='right')
+        now_ts = pd.Timestamp(now)
+        idx = self._timestamp_series.searchsorted(now_ts, side="right")
         start_idx = max(0, idx - lookback) if lookback > 0 else 0
         visible = self.candles.iloc[start_idx:idx].copy()
         if not visible.empty:
+            visible["is_closed"] = True
             self.last_candle_query_max_timestamp = visible["timestamp"].max().to_pydatetime()
         return visible.reset_index(drop=True)
 
     def get_available_expiries(self, underlying: str) -> list[str]:
-        today = self.clock.now().date()
-        return [today.isoformat(), (today + timedelta(days=1)).isoformat()]
+        now = self.clock.now()
+        today = now.date()
+        expiries = [today.isoformat(), (today + timedelta(days=1)).isoformat()]
+        # Never return an expiry whose settlement has already passed: an option
+        # expiring at 12:30 UTC today cannot be traded at 13:00 UTC.
+        return [e for e in expiries if self._expiry_datetime(e) > now]
 
     def get_option_chain(self, underlying: str, expiry_date: str) -> pd.DataFrame:
         now = self.clock.now()
@@ -107,6 +122,8 @@ class HistoricalDataProvider(DataProvider):
         expiry = self._expiry_datetime(expiry_date)
         t_years = max((expiry - now).total_seconds(), 0.0) / (365.0 * 24.0 * 3600.0)
         step = self._strike_step(spot, self.params.underlying)
+        iv = self._iv_as_of(now)
+        half_spread = self.params.bid_ask_spread_pct / 2.0
         rows = []
 
         center = round(spot / step) * step
@@ -115,27 +132,30 @@ class HistoricalDataProvider(DataProvider):
             if strike <= 0:
                 continue
             for option_type in ("put", "call"):
-                mark = self._bs_price(
+                g = bs_greeks(
                     spot=spot,
                     strike=strike,
                     t_years=t_years,
-                    iv=self._effective_iv,
+                    iv=iv,
                     rate=self.params.risk_free_rate,
                     option_type=option_type,
                 )
+                mark = g["price"]
                 rows.append(
                     {
                         "symbol": f"{option_type[0].upper()}-{underlying}-{int(strike)}-{expiry_date}",
                         "option_type": option_type,
                         "strike": float(strike),
-                        "bid": max(mark * 0.995, 0.0),
-                        "ask": mark * 1.005,
+                        "bid": max(mark * (1.0 - half_spread), 0.0),
+                        "ask": mark * (1.0 + half_spread),
                         "mark": mark,
-                        "iv": self._effective_iv,
-                        "delta": None,
-                        "gamma": None,
-                        "theta": None,
-                        "vega": None,
+                        "iv": iv,
+                        "delta": g["delta"],
+                        "gamma": g["gamma"],
+                        "theta": g["theta"],
+                        "vega": g["vega"],
+                        "volume": 1000.0,
+                        "open_interest": 1000.0,
                         "product_id": None,
                         "underlying_price": spot,
                         "timestamp": now,
@@ -149,18 +169,43 @@ class HistoricalDataProvider(DataProvider):
         spot = self._spot_as_of(now)
         expiry = self._expiry_datetime(parsed["expiry"])
         t_years = max((expiry - now).total_seconds(), 0.0) / (365.0 * 24.0 * 3600.0)
-        mark = self._bs_price(
+        iv = self._iv_as_of(now)
+        g = bs_greeks(
             spot=spot,
             strike=parsed["strike"],
             t_years=t_years,
-            iv=self._effective_iv,
+            iv=iv,
             rate=self.params.risk_free_rate,
             option_type=parsed["option_type"],
         )
-        return {"mark": mark}
+        mark = g["price"]
+        half_spread = self.params.bid_ask_spread_pct / 2.0
+        return {
+            "mark": mark,
+            "bid": max(mark * (1.0 - half_spread), 0.0),
+            "ask": mark * (1.0 + half_spread),
+            "mid": mark,
+            "iv": iv,
+            "delta": g["delta"],
+            "gamma": g["gamma"],
+            "theta": g["theta"],
+            "vega": g["vega"],
+            "underlying_price": spot,
+        }
+
+    def _iv_as_of(self, now: datetime) -> float:
+        if self.params.iv_mode != "realized_scaled":
+            return self._effective_iv
+        idx = self._timestamp_series.searchsorted(pd.Timestamp(now), side="right")
+        if idx == 0:
+            return self._effective_iv
+        rv = self.candles.iloc[idx - 1].get("realized_vol")
+        if rv is None or pd.isna(rv) or rv <= 0:
+            return self._effective_iv
+        return float(max(min(rv, 3.0), 0.05))
 
     def _spot_as_of(self, now: datetime) -> float:
-        idx = self._timestamp_series.searchsorted(pd.Timestamp(now), side='right')
+        idx = self._timestamp_series.searchsorted(pd.Timestamp(now), side="right")
         if idx == 0:
             raise ValueError("no candle is visible at simulated clock time")
         return float(self.candles.iloc[idx - 1]["close"])
@@ -179,13 +224,30 @@ class HistoricalDataProvider(DataProvider):
 
     @staticmethod
     def _expiry_datetime(expiry_date: str) -> datetime:
+        """
+        Delta India option settlement: 12:30 UTC (18:00 IST).
+        Supertrend signals fire on the hour; using 12:30 avoids both the
+        phantom next-day expiry after 12:30 UTC and the 5.5-hour ASSET
+        settlement error the old 17:30 default created.
+        """
         return datetime.fromisoformat(expiry_date).replace(
-            hour=17,
+            hour=12,
             minute=30,
             second=0,
             microsecond=0,
             tzinfo=timezone.utc,
         )
+
+    @staticmethod
+    def _parse_symbol(symbol: str) -> dict:
+        parts = symbol.split("-")
+        if len(parts) < 4:
+            raise ValueError(f"cannot parse option symbol: {symbol}")
+        return {
+            "option_type": "put" if parts[0].upper() == "P" else "call",
+            "strike": float(parts[2]),
+            "expiry": "-".join(parts[3:]),
+        }
 
     @staticmethod
     def _strike_step(spot: float, underlying: str = "BTC") -> float:
@@ -194,39 +256,3 @@ class HistoricalDataProvider(DataProvider):
         if upper in ASSET_STRIKE_STEPS:
             return ASSET_STRIKE_STEPS[upper]
         return float(max(round(spot * 0.01 / 50.0) * 50, 50))
-
-    @staticmethod
-    def _bs_price(
-        spot: float,
-        strike: float,
-        t_years: float,
-        iv: float,
-        rate: float,
-        option_type: str,
-    ) -> float:
-        if spot <= 0 or strike <= 0:
-            return 0.0
-        if t_years <= 0:
-            if option_type == "call":
-                return max(0.0, spot - strike)
-            return max(0.0, strike - spot)
-
-        d1 = (math.log(spot / strike) + (rate + 0.5 * iv**2) * t_years) / (iv * math.sqrt(t_years))
-        d2 = d1 - iv * math.sqrt(t_years)
-        normal = NormalDist()
-        if option_type == "call":
-            return spot * normal.cdf(d1) - strike * math.exp(-rate * t_years) * normal.cdf(d2)
-        return strike * math.exp(-rate * t_years) * normal.cdf(-d2) - spot * normal.cdf(-d1)
-
-    @staticmethod
-    def _parse_symbol(symbol: str) -> dict:
-        parts = symbol.split("-")
-        if len(parts) < 4:
-            raise ValueError(f"cannot parse option symbol: {symbol}")
-        option_type = "put" if parts[0] == "P" else "call"
-        return {
-            "option_type": option_type,
-            "underlying": parts[1],
-            "strike": float(parts[2]),
-            "expiry": "-".join(parts[3:]),
-        }

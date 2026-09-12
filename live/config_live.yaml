@@ -1,23 +1,59 @@
 underlying: BTC
-candle_symbol: BTCUSDT
+candle_symbol: BTCUSD
 resolution: 1h
 spread_type: directional
-ema_trend_fast: 9
-ema_trend_slow: 21
-adx_trend_threshold: 20.0
-rsi_period: 14
-rsi_oversold: 35.0
-rsi_overbought: 65.0
+
+# Supertrend signal (locked to 1H ATR 15 / 1.5)
+supertrend_atr_period: 15
+supertrend_multiplier: 1.5
+supertrend_timeframe: 1h
+signal_requires_close: true
+
+# Trend filters
+trend_filter_enabled: true
+trend_filter_period: 50
+min_trend_bars: 2
+
+# Spread config
 spread_width: 200
-tp_pct: 0.50
-sl_pct: 1.00
-cooldown_seconds: 3600
-early_exit_minutes: 60
+strike_offset_pct: 0.020   # OOS-validated (was 0.015); see research/experiments.py
+expiry_selection: nearest_valid_after_signal
+strike_selection: atm_or_nearest_otm
+expiry_cutoff_hour: 9
+
+# Exit logic
+tp_pct: 0.60
+sl_pct: 2.00               # OOS-validated (was 1.50); keep == stop_loss_pct
+stop_loss_pct: 2.00
+take_profit_pct: 0.60
+exit_on_opposite_signal: false
+cooldown_seconds: 21600    # 6 hours
+early_exit_minutes: 240    # 4 hours
+max_hold_hours: 0          # 0 = disabled
+
+# Contract spec / costs (keep qty=1 sizing; overridden by TRADE_QTY env)
 qty: 1
+contract_size: 0.001       # Delta BTC options: 0.001 BTC per contract
 slippage_pct: 0
 commission_per_leg: 0
-delta_base_url: https://cdn-ind.testnet.deltaex.org
-india_base_url: https://api.india.delta.exchange
+settlement_fee_pct: 0.00125
+
+# Sizing
+sizing_mode: fixed_qty
+risk_pct: 0.01
+max_risk_pct: 0.03
+
+# Liquidity filters (live: reject illiquid chains before ordering)
+liquidity_filter_enabled: true
+max_bid_ask_pct: 0.15
+min_volume: 0
+min_open_interest: 0
+max_slippage_pct: 0.05
+
+# State persistence
 state_path: state/live_position.json
 trade_log_path: state/trades.jsonl
 poll_seconds: 10
+
+# Safety
+use_exchange_stop: false     # true only after Delta confirms spread-level/OCO stop mechanism

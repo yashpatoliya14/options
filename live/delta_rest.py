@@ -41,6 +41,13 @@ class DeltaRestClient:
         data = self._get(f"/v2/tickers/{symbol}")
         return data.get("result", {})
 
+    def get_order(self, order_id) -> dict:
+        data = self._get("/v2/orders", {"id": order_id})
+        return data.get("result", {})
+
+    def cancel_order(self, order_id) -> dict:
+        return self._delete(f"/v2/orders/{order_id}").get("result", {})
+
     def get_available_expiries(self, underlying: str) -> list[str]:
         products = self.get_products()
         expiries = {
@@ -73,6 +80,9 @@ class DeltaRestClient:
         body_text = json.dumps(body)
         headers = self._headers("POST", path, body=body_text)
         return self._request("POST", path, data=body_text, headers=headers)
+
+    def _delete(self, path: str) -> Any:
+        return self._request("DELETE", path, headers=self._headers("DELETE", path))
 
     def _headers(self, method: str, path: str, query: str = "", body: str = "") -> dict[str, str]:
         timestamp = str(int(time.time()))

@@ -1,23 +1,78 @@
 underlying: BTC
-candle_symbol: BTCUSD
-resolution: 5m
+candle_symbol: BTCUSDT
+resolution: 1h
+spread_type: directional
+
+# Supertrend signal (locked)
+supertrend_atr_period: 15
+supertrend_multiplier: 1.5
+supertrend_timeframe: 1h
+signal_requires_close: true
+
+# Trend filters (anti-whipsaw)
+trend_filter_enabled: true
+trend_filter_period: 50
+min_trend_bars: 2
+
+# Expiry / strikes
+expiry_selection: nearest_valid_after_signal
+strike_selection: atm_or_nearest_otm
+expiry_cutoff_hour: 9
+
+# Legacy EMA (not used for directional mode)
 ema_fast: 9
 ema_slow: 21
 adx_period: 14
 adx_min: 0
+
+# Spread
 credit_min: 150
 credit_max: 200
 spread_width: 200
-tp_pct: 0.50
+
+# Walk-forward/OOS-validated changes (see research/experiments.py):
+#   strike_offset 1.5% -> 2.0% and stop 1.5 -> 2.0 are the only two changes
+#   that survived out-of-sample testing (5/6 walk-forward folds positive,
+#   confirmed on untouched 20% holdout and on the BTCUSDT instrument).
+strike_offset_pct: 0.020
+
+# Exit
+tp_pct: 0.60
 sl_pct: 2.00
-cooldown_seconds: 900
+stop_loss_pct: 2.00
+take_profit_pct: 0.60
+exit_on_opposite_signal: false
+cooldown_seconds: 21600    # 6 hours
+early_exit_minutes: 240    # 4 hours
+max_hold_hours: 0          # 0 = disabled
+
+# Costs / contract spec
 qty: 1
+contract_size: 0.001       # Delta BTC options: 0.001 BTC per contract
 slippage_pct: 0.0025
-commission_per_leg: 0
+commission_per_leg: 0.0    # Delta India: flat crypto-options fee is zero
+settlement_fee_pct: 0.00125  # taker fee on leg notional
+capital: 10000
+
+# Risk-based sizing (fixed_qty keeps qty above)
+sizing_mode: fixed_qty
+risk_pct: 0.01
+max_risk_pct: 0.03
+dd_risk_reduction: false
+
+# Execution realism
+fill_model: bid_ask
+execution_delay_seconds: 0
+drop_incomplete_bars: true
+
+# Liquidity filters
+liquidity_filter_enabled: true
+max_bid_ask_pct: 0.15
+min_volume: 0
+min_open_interest: 0
+max_slippage_pct: 0.05
+
+# Black-Scholes reconstruction
 option_data_mode: reconstructed
 assumed_iv: 0.55
 risk_free_rate: 0
-start: "2026-01-01"
-end: "2026-12-31"
-candles_path: data/BTCUSD_5m.csv
-initial_cash: 10000

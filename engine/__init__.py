@@ -1,4 +1,5 @@
 from .config_schema import StrategyParams
+from .entry_timing import SignalGate
 from .models import (
     Decision,
     FillResult,
@@ -15,6 +16,7 @@ __all__ = [
     "FillResult",
     "Leg",
     "Signal",
+    "SignalGate",
     "SpreadCandidate",
     "SpreadPosition",
     "StrategyEngine",

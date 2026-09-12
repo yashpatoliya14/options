@@ -13,7 +13,19 @@ class WallClock(Clock):
         return datetime.now(timezone.utc)
 
 
+def _f(value) -> float | None:
+    if value is None:
+        return None
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    return value if value == value else None  # drop NaN
+
+
 class LiveDataProvider(DataProvider):
+    """Delta REST market-data adapter returning real bid/ask and greeks."""
+
     def __init__(self, client: Any, clock: Clock):
         self.client = client
         self.clock = clock
@@ -32,13 +44,15 @@ class LiveDataProvider(DataProvider):
         candles["timestamp"] = pd.to_datetime(candles["timestamp"], unit="s", utc=True, errors="coerce")
         for column in ("open", "high", "low", "close", "volume"):
             candles[column] = pd.to_numeric(candles[column], errors="raise")
-        candles = candles[candles["timestamp"] <= pd.Timestamp(now)]
+        now_ts = pd.Timestamp(now)
+        close_at = candles["timestamp"] + pd.to_timedelta(seconds, unit="s")
+        candles = candles[close_at <= now_ts]
         return candles.sort_values("timestamp").tail(lookback).reset_index(drop=True)
 
     def get_available_expiries(self, underlying: str) -> list[str]:
-        today = self.clock.now().date()
+        now = self.clock.now()
         expiries = self.client.get_available_expiries(underlying)
-        return [expiry for expiry in expiries if datetime.fromisoformat(expiry).date() >= today]
+        return [expiry for expiry in expiries if datetime.fromisoformat(expiry).date() >= now.date()]
 
     def get_option_chain(self, underlying: str, expiry_date: str) -> pd.DataFrame:
         quotes = self.client.get_option_chain(underlying, expiry_date)
@@ -46,30 +60,53 @@ class LiveDataProvider(DataProvider):
         for index, quote in enumerate(quotes, start=1):
             if isinstance(quote, dict):
                 option_type = "call" if "call" in quote.get("contract_type", "") else "put"
-                raw_quotes = quote.get("quotes", {})
-                premium = raw_quotes.get("best_bid") or quote.get("mark_price") or quote.get("close") or 0
-                strike = quote.get("strike_price") or quote.get("strike") or 0
+                raw = quote.get("quotes", {}) or {}
+                bid = _f(raw.get("best_bid"))
+                ask = _f(raw.get("best_ask"))
+                mark = _f(quote.get("mark_price")) or _f(quote.get("close"))
+                if mark is None:
+                    mark = bid or ask or 0.0
+                strike = _f(quote.get("strike_price")) or _f(quote.get("strike")) or 0.0
                 symbol = quote.get("symbol", "")
-                underlying_price = quote.get("spot_price") or quote.get("underlying_price") or 0
+                underlying_price = _f(quote.get("spot_price")) or _f(quote.get("underlying_price")) or 0.0
+                greeks = {
+                    "iv": _f(quote.get("iv")),
+                    "delta": _f(quote.get("delta")),
+                    "gamma": _f(quote.get("gamma")),
+                    "theta": _f(quote.get("theta")),
+                    "vega": _f(quote.get("vega")),
+                }
             else:
                 option_type = quote.option_type
-                premium = quote.premium
-                strike = quote.strike
+                bid = _f(quote.bid)
+                ask = _f(quote.ask)
+                mark = _f(quote.mark)
+                strike = _f(quote.strike) or 0.0
                 symbol = quote.symbol
-                underlying_price = quote.underlying_price
+                underlying_price = _f(quote.underlying_price) or 0.0
+                greeks = {
+                    "iv": _f(getattr(quote, "iv", None)),
+                    "delta": _f(getattr(quote, "delta", None)),
+                    "gamma": _f(getattr(quote, "gamma", None)),
+                    "theta": _f(getattr(quote, "theta", None)),
+                    "vega": _f(getattr(quote, "vega", None)),
+                }
             rows.append(
                 {
                     "symbol": symbol,
                     "option_type": option_type,
                     "strike": float(strike),
-                    "bid": float(premium),
-                    "ask": float(premium),
-                    "mark": float(premium),
-                    "iv": None,
-                    "delta": None,
-                    "gamma": None,
-                    "theta": None,
-                    "vega": None,
+                    "bid": float(bid) if bid is not None else 0.0,
+                    "ask": float(ask) if ask is not None else 0.0,
+                    "mark": float(mark) if mark is not None else 0.0,
+                    "mid": (
+                        (float(bid) + float(ask)) / 2.0
+                        if bid is not None and ask is not None and bid > 0 and ask > 0
+                        else (float(mark) if mark is not None else 0.0)
+                    ),
+                    "volume": _f(raw.get("volume")) if isinstance(quote, dict) else None,
+                    "open_interest": _f(raw.get("open_interest")) if isinstance(quote, dict) else None,
+                    **greeks,
                     "product_id": index,
                     "underlying_price": float(underlying_price),
                     "timestamp": self.clock.now(),
@@ -79,20 +116,24 @@ class LiveDataProvider(DataProvider):
 
     def get_quote(self, symbol: str) -> dict[str, Any]:
         ticker = self.client.get_ticker(symbol)
-        quote = ticker.get("quotes", {}) if isinstance(ticker, dict) else {}
-        bid = quote.get("best_bid") or ticker.get("mark_price") or ticker.get("close")
-        ask = quote.get("best_ask") or ticker.get("mark_price") or ticker.get("close")
-        mark = ticker.get("mark_price") or bid
+        raw = ticker.get("quotes", {}) if isinstance(ticker, dict) else {}
+        bid = _f(raw.get("best_bid"))
+        ask = _f(raw.get("best_ask"))
+        mark = _f(ticker.get("mark_price")) if isinstance(ticker, dict) else None
+        if mark is None:
+            mark = bid if bid is not None else ask
+        mid = (bid + ask) / 2.0 if bid is not None and ask is not None and bid > 0 and ask > 0 else mark
         return {
             "symbol": symbol,
-            "bid": float(bid),
-            "ask": float(ask),
-            "mark": float(mark),
-            "iv": ticker.get("iv"),
-            "delta": ticker.get("delta"),
-            "gamma": ticker.get("gamma"),
-            "theta": ticker.get("theta"),
-            "vega": ticker.get("vega"),
+            "bid": float(bid) if bid is not None else 0.0,
+            "ask": float(ask) if ask is not None else 0.0,
+            "mark": float(mark) if mark is not None else 0.0,
+            "mid": float(mid) if mid is not None else 0.0,
+            "iv": _f(ticker.get("iv")) if isinstance(ticker, dict) else None,
+            "delta": _f(ticker.get("delta")) if isinstance(ticker, dict) else None,
+            "gamma": _f(ticker.get("gamma")) if isinstance(ticker, dict) else None,
+            "theta": _f(ticker.get("theta")) if isinstance(ticker, dict) else None,
+            "vega": _f(ticker.get("vega")) if isinstance(ticker, dict) else None,
             "timestamp": self.clock.now(),
         }
 
