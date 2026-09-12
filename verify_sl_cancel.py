@@ -54,9 +54,10 @@ def main() -> int:
 
     params = StrategyParams().overlay(config)
     
-    base_url = "https://cdn-ind.testnet.deltaex.org" if use_testnet else "https://api.delta.exchange"
-    if use_testnet and os.getenv("DELTA_TESTNET_URL"):
-        base_url = os.getenv("DELTA_TESTNET_URL")
+    if use_testnet:
+        base_url = os.getenv("DELTA_TESTNET_URL", "https://cdn-ind.testnet.deltaex.org")
+    else:
+        base_url = os.getenv("DELTA_BASE_URL", "https://api.india.delta.exchange")
         
     client = DeltaRestClient(
         base_url=base_url,
