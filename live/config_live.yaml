@@ -2,6 +2,7 @@ underlying: BTC
 candle_symbol: BTCUSD
 resolution: 1h
 spread_type: directional
+bear_structure: call_credit
 
 # Supertrend signal (locked to 1H ATR 15 / 1.5)
 supertrend_atr_period: 15
@@ -16,19 +17,23 @@ min_trend_bars: 2
 
 # Spread config
 spread_width: 200
+min_credit_risk_ratio: 0.00
+target_credit_risk_ratio: 1.00
 strike_offset_pct: 0.020   # OOS-validated (was 0.015); see research/experiments.py
 expiry_selection: nearest_valid_after_signal
 strike_selection: atm_or_nearest_otm
 expiry_cutoff_hour: 9
 
 # Exit logic
-tp_pct: 0.60
-sl_pct: 2.00               # OOS-validated (was 1.50); keep == stop_loss_pct
+tp_pct: 0.50
+stop_loss_enabled: false
+sl_pct: 2.00
 stop_loss_pct: 2.00
-take_profit_pct: 0.60
-exit_on_opposite_signal: false
+take_profit_pct: 0.50
+exit_on_opposite_signal: true
+reversal_profit_capture_pct: 0.50
 cooldown_seconds: 21600    # 6 hours
-early_exit_minutes: 240    # 4 hours
+early_exit_minutes: 0      # hold until expiry unless target/reversal exits
 max_hold_hours: 0          # 0 = disabled
 
 # Contract spec / costs (keep qty=1 sizing; overridden by TRADE_QTY env)

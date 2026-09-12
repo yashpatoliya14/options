@@ -41,9 +41,11 @@ class StrategyParams:
     credit_min: float = 150.0
     credit_max: float = 200.0
     spread_width: float = 200.0
+    min_credit_risk_ratio: float = 0.90  # Credit / max loss; 0.90 is near 1:1.
+    target_credit_risk_ratio: float = 1.00  # Prefer screenshot-like 1:1 payoff.
     spread_type: str = "directional"   # "directional" or "credit"
     bull_structure: str = "put_credit"     # put_credit (Bull Put)
-    bear_structure: str = "call_credit"    # call_credit (Bear Call) | put_debit (Bear Put)
+    bear_structure: str = "call_credit"    # call_credit (Bear Call) | put_credit (bullish put credit) | put_debit (Bear Put)
     strike_offset_pct: float = 0.015   # How far OTM to place short strike (1.5%)
     expiry_selection: str = "cutoff_hour"  # cutoff_hour | target_dte | nearest_valid_after_signal
     strike_selection: str = "otm_pct"  # otm_pct | delta | vol_adjusted | atm_or_nearest_otm
@@ -57,9 +59,11 @@ class StrategyParams:
     # --- Exit logic ---
     tp_pct: float = 0.50
     sl_pct: float = 2.00
+    stop_loss_enabled: bool = False
     stop_loss_pct: float = 1.00
     take_profit_pct: float = 0.50
     exit_on_opposite_signal: bool = False
+    reversal_profit_capture_pct: float = 0.50
     cooldown_seconds: int = 900
     expiry_cutoff_hour: int = 9        # UTC hour: >= this → next-day expiry
     early_exit_minutes: int = 60       # Time-based exit for pre-cutoff signals
@@ -149,6 +153,10 @@ class StrategyParams:
             raise ValueError("credit band must be non-negative and ordered")
         if self.spread_width <= 0:
             raise ValueError("spread_width must be positive")
+        if self.min_credit_risk_ratio < 0.0:
+            raise ValueError("min_credit_risk_ratio must be non-negative")
+        if self.target_credit_risk_ratio < 0.0:
+            raise ValueError("target_credit_risk_ratio must be non-negative")
         if self.tp_pct < 0:
             raise ValueError("tp_pct must be non-negative")
         if self.sl_pct <= 0:
@@ -157,6 +165,8 @@ class StrategyParams:
             raise ValueError("stop_loss_pct must be positive")
         if self.take_profit_pct < 0:
             raise ValueError("take_profit_pct must be non-negative")
+        if not 0.0 <= self.reversal_profit_capture_pct <= 1.0:
+            raise ValueError("reversal_profit_capture_pct must be in [0, 1]")
         if self.cooldown_seconds < 0:
             raise ValueError("cooldown_seconds must be non-negative")
         if self.qty <= 0:
@@ -189,7 +199,7 @@ class StrategyParams:
             raise ValueError("unsupported spread_type")
         if self.bull_structure not in {"put_credit"}:
             raise ValueError("unsupported bull_structure")
-        if self.bear_structure not in {"put_debit", "call_credit"}:
+        if self.bear_structure not in {"put_credit", "call_credit", "put_debit"}:
             raise ValueError("unsupported bear_structure")
         if self.entry_mode not in {"immediate", "delay", "confirm", "pullback"}:
             raise ValueError("unsupported entry_mode")

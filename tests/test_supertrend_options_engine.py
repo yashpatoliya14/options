@@ -61,7 +61,7 @@ def test_expiry_selection_uses_next_valid_expiry_after_cutoff():
 
 
 def test_bear_call_spread_sells_lower_call_and_buys_higher_call():
-    params = StrategyParams(spread_type="directional", spread_width=100.0)
+    params = StrategyParams(spread_type="directional", bear_structure="call_credit", spread_width=100.0)
     engine = StrategyEngine(params)
 
     signal = Signal(
@@ -74,9 +74,9 @@ def test_bear_call_spread_sells_lower_call_and_buys_higher_call():
 
     chain = pd.DataFrame(
         [
-            {"symbol": "C-BTC-700-2026-01-04", "option_type": "call", "strike": 700.0, "mark": 300.0},
-            {"symbol": "C-BTC-800-2026-01-04", "option_type": "call", "strike": 800.0, "mark": 200.0},
-            {"symbol": "C-BTC-900-2026-01-04", "option_type": "call", "strike": 900.0, "mark": 100.0},
+            {"symbol": "C-BTC-700-2026-01-04", "option_type": "call", "strike": 700.0, "mark": 260.0, "underlying_price": 800.0},
+            {"symbol": "C-BTC-800-2026-01-04", "option_type": "call", "strike": 800.0, "mark": 160.0, "underlying_price": 800.0},
+            {"symbol": "C-BTC-900-2026-01-04", "option_type": "call", "strike": 900.0, "mark": 100.0, "underlying_price": 800.0},
         ]
     )
 
@@ -87,3 +87,5 @@ def test_bear_call_spread_sells_lower_call_and_buys_higher_call():
     assert candidate.short_leg.strike < candidate.long_leg.strike
     assert candidate.long_leg.strike == 900.0
     assert candidate.short_leg.strike == 800.0
+
+

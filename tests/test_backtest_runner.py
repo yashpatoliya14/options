@@ -28,6 +28,11 @@ class ScriptedEngine(StrategyEngine):
         return "profit_target"
 
 
+class HoldUntilExpiryEngine(ScriptedEngine):
+    def should_close(self, position, current_mark):
+        return None
+
+
 def test_backtest_runner_emits_shared_reconstructed_trade_records():
     candles = pd.DataFrame(
         {
@@ -60,3 +65,35 @@ def test_backtest_runner_emits_shared_reconstructed_trade_records():
     assert trade.expiry_label == "0dte"
     assert trade.short_strike == 9900
     assert result.report["trade_count"] == 1
+
+
+def test_backtest_runner_closes_position_at_option_settlement():
+    candles = pd.DataFrame(
+        {
+            "timestamp": pd.date_range(datetime(2026, 1, 1, 0, tzinfo=timezone.utc), periods=15, freq="h"),
+            "open": [10000] * 15,
+            "high": [10020] * 15,
+            "low": [9980] * 15,
+            "close": [10000] * 15,
+            "volume": [1] * 15,
+        }
+    )
+    params = StrategyParams(
+        ema_fast=2,
+        ema_slow=4,
+        spread_width=200,
+        credit_min=1,
+        credit_max=10000,
+        option_data_mode="reconstructed",
+        early_exit_minutes=0,
+    )
+    clock = SimulatedClock(candles["timestamp"].iloc[0].to_pydatetime())
+    provider = HistoricalDataProvider(candles, clock, params)
+    executor = SimulatedExecutor(provider, params)
+    runner = BacktestRunner(HoldUntilExpiryEngine(params), provider, executor, params, lookback=10)
+
+    result = runner.run()
+
+    assert len(result.trades) == 1
+    assert result.trades[0].exit_reason == "expired"
+    assert result.trades[0].exit_time == datetime(2026, 1, 1, 13, tzinfo=timezone.utc)

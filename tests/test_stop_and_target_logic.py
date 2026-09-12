@@ -29,8 +29,19 @@ def test_profit_target_stop_loss_and_hold():
     position = _position(entry_credit=180)
 
     assert engine.should_close(position, current_mark=90) == "profit_target"
-    assert engine.should_close(position, current_mark=360) == "stop_loss"
+    assert engine.should_close(position, current_mark=360) is None
     assert engine.should_close(position, current_mark=150) is None
+
+    stop_engine = StrategyEngine(StrategyParams(tp_pct=0.50, sl_pct=1.0, stop_loss_enabled=True))
+    assert stop_engine.should_close(position, current_mark=360) == "stop_loss"
+
+
+def test_opposite_signal_requires_profit_capture_before_cut():
+    engine = StrategyEngine(StrategyParams(reversal_profit_capture_pct=0.50))
+    position = _position(entry_credit=180)
+
+    assert engine.should_cut_and_reenter(position, _signal("bear"), current_mark=120) is False
+    assert engine.should_cut_and_reenter(position, _signal("bear"), current_mark=90) is True
 
 
 def test_cut_and_reenter_only_on_opposite_signal():

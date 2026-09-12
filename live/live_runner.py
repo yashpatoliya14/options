@@ -123,7 +123,8 @@ class LiveRunner:
         signal_cut = False
         if self.position is not None:
             if self.params.exit_on_opposite_signal:
-                if not self.engine.should_cut_and_reenter(self.position, signal):
+                current_mark = self.executor.mark_to_market(self.position)
+                if not self.engine.should_cut_and_reenter(self.position, signal, current_mark):
                     return
                 self._close_position(signal.timestamp, "signal_cut")
                 signal_cut = True

@@ -124,12 +124,14 @@ def _pick_strikes(
     target_dte: float = 1.0,
     min_dte: float = 0.0,
     max_dte: float = 14.0,
+    min_credit_risk_ratio: float = 0.90,
+    bear_structure: str = "call_credit",
 ):
     """Reconstruct the chain at candle close and select strikes like the engine.
-    Engine mapping: bull → puts, bear → calls (bear_structure=call_credit)."""
+    Engine mapping supports bull puts, bear calls, and bear put credits."""
     spot = float(df["close"].iloc[idx])
     ts = pd.Timestamp(df["timestamp"].iloc[idx])
-    option_type = "put" if direction == "bull" else "call"
+    option_type = "put" if direction == "bull" or bear_structure == "put_credit" else "call"
 
     # Expiry: same-day unless signal at/after the cutoff hour (cutoff_hour mode),
     # or DTE-scored closest to target_dte (nearest_valid_after_signal mode),
@@ -174,8 +176,12 @@ def _pick_strikes(
     short_strike = best[0]
     # Engine geometry: long target = short -+ width, then nearest grid strike
     # strictly below (bull) / above (bear) the short strike.
-    long_target = short_strike - (200.0 if direction == "bull" else -200.0)
-    candidates = [s for s in grid if (s < short_strike if direction == "bull" else s > short_strike)]
+    put_credit_bear = direction == "bear" and bear_structure == "put_credit"
+    long_target = short_strike - 200.0 if direction == "bull" or put_credit_bear else short_strike + 200.0
+    candidates = [
+        s for s in grid
+        if (s < short_strike if direction == "bull" or put_credit_bear else s > short_strike)
+    ]
     if not candidates:
         return None
     long_strike = min(candidates, key=lambda s: abs(s - long_target))
@@ -200,6 +206,11 @@ def _pick_strikes(
     rows["t_years"] = t_years
     rows["spot"] = spot
     rows["expiry"] = expiry_str
+    credit = rows["short"]["bid"] * (1.0 - SLIPPAGE_PCT) - rows["long"]["ask"] * (1.0 + SLIPPAGE_PCT)
+    width = abs(short_strike - long_strike)
+    max_loss = width - credit
+    if credit <= 0 or width <= 0 or max_loss <= 0:
+        return None
     return rows
 
 
@@ -256,6 +267,8 @@ def run_backtest(
     target_dte: float = 1.0,
     min_dte: float = 0.0,
     max_dte: float = 14.0,
+    min_credit_risk_ratio: float = 0.90,
+    bear_structure: str = "call_credit",
 ) -> dict:
     """
     Trade the signal list bar by bar. signal_filter maps a signal dict to
@@ -348,6 +361,8 @@ def run_backtest(
             target_dte=target_dte,
             min_dte=min_dte,
             max_dte=max_dte,
+            min_credit_risk_ratio=min_credit_risk_ratio,
+            bear_structure=bear_structure,
         )
         if picked is None:
             continue
@@ -364,7 +379,7 @@ def run_backtest(
         position = {
             "direction": sig["direction"],
             "signal_type": "buy" if sig["direction"] == "bull" else "sell",
-            "option_type": "put" if sig["direction"] == "bull" else "call",
+            "option_type": "put" if sig["direction"] == "bull" or bear_structure == "put_credit" else "call",
             "entry_idx": i,
             "entry_time": now,
             "short_strike": picked["short"]["strike"],

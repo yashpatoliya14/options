@@ -183,8 +183,18 @@ class StrategyEngine:
     # PUBLIC: Position management
     # ------------------------------------------------------------------
 
-    def should_cut_and_reenter(self, position: SpreadPosition, new_signal: Signal) -> bool:
-        return position.direction != new_signal.direction
+    def should_cut_and_reenter(
+        self,
+        position: SpreadPosition,
+        new_signal: Signal,
+        current_mark: float | None = None,
+    ) -> bool:
+        """Cut only on an opposite signal after enough profit is captured."""
+        if position.direction == new_signal.direction:
+            return False
+        if current_mark is None:
+            return True
+        return self._profit_capture_fraction(position, current_mark) >= self.params.reversal_profit_capture_pct
 
     def should_close(
         self,
@@ -207,7 +217,7 @@ class StrategyEngine:
         if entry > 0:
             if unrealized >= entry * self.params.take_profit_pct:
                 return "profit_target"
-            if mark >= entry * self.params.stop_loss_pct:
+            if self.params.stop_loss_enabled and mark >= entry * self.params.stop_loss_pct:
                 return "stop_loss"
             return None
 
@@ -217,15 +227,28 @@ class StrategyEngine:
         max_profit = max(width - debit, 0.0)
         if max_profit > 0 and unrealized >= max_profit * self.params.take_profit_pct:
             return "profit_target"
-        if unrealized <= -debit * self.params.stop_loss_pct:
+        if self.params.stop_loss_enabled and unrealized <= -debit * self.params.stop_loss_pct:
             return "stop_loss"
         return None
 
     def should_time_exit(self, position: SpreadPosition, now: datetime) -> bool:
         if position.expiry_type != "same_day":
             return False
+        if self.params.early_exit_minutes <= 0:
+            return False
         elapsed_min = (now - position.entry_time).total_seconds() / 60.0
         return elapsed_min >= self.params.early_exit_minutes
+
+    def _profit_capture_fraction(self, position: SpreadPosition, current_mark: float) -> float:
+        entry = float(position.entry_credit)
+        mark = float(current_mark)
+        if entry > 0:
+            return max(0.0, (entry - mark) / entry)
+        debit = abs(entry)
+        max_profit = max(float(position.width) - debit, 0.0)
+        if max_profit <= 0:
+            return 0.0
+        return max(0.0, (entry - mark) / max_profit)
 
     def should_greek_exit(self, net_delta: float | None, dte: float | None) -> bool:
         if not self.params.greek_exit_enabled:
@@ -301,9 +324,9 @@ class StrategyEngine:
             candidate = self._build_directional_spread(signal, expiry, chain, label)
             if candidate is None:
                 continue
-            if not self.params.spread_scoring_enabled:
-                return self.size_candidate(candidate)
             score = self._candidate_score(candidate, chain)
+            if not self.params.spread_scoring_enabled:
+                score = 0.0
             if score > best_score:
                 best_score = score
                 best = candidate
@@ -323,6 +346,8 @@ class StrategyEngine:
         normalized = chain.copy()
         normalized["option_type"] = normalized["option_type"].str.lower()
         option_type = "put" if signal.direction == "bull" else "call"
+        if signal.direction == "bear" and self.params.bear_structure in {"put_credit", "put_debit"}:
+            option_type = "put"
         normalized = normalized[normalized["option_type"] == option_type].copy()
         if normalized.empty:
             return None
@@ -341,10 +366,16 @@ class StrategyEngine:
         else:
             if self.params.bear_structure == "put_debit":
                 return self._build_bear_put_debit(signal, expiry, expiry_label, normalized, spot, width)
-            short_target = spot * (1.0 + self.params.strike_offset_pct)
-            short_candidates = normalized[normalized["strike"] >= spot].copy()
-            long_filter = lambda strike, short_strike: strike > short_strike
-            long_strike = lambda short_strike: short_strike + width
+            if self.params.bear_structure == "put_credit":
+                short_target = spot * (1.0 + self.params.strike_offset_pct)
+                short_candidates = normalized[normalized["strike"] >= spot].copy()
+                long_filter = lambda strike, short_strike: strike < short_strike
+                long_strike = lambda short_strike: short_strike - width
+            else:
+                short_target = spot * (1.0 + self.params.strike_offset_pct)
+                short_candidates = normalized[normalized["strike"] >= spot].copy()
+                long_filter = lambda strike, short_strike: strike > short_strike
+                long_strike = lambda short_strike: short_strike + width
         if short_candidates.empty:
             return None
         short_candidates["dist"] = (short_candidates["strike"] - short_target).abs()
@@ -363,7 +394,14 @@ class StrategyEngine:
                 if not passes_liquidity(long, self.params):
                     continue
                 raw_credit = net_spread_credit(short, long, self.params)
-                if raw_credit <= 0 or expected_slippage_pct(short, long) > self.params.max_slippage_pct:
+                width_value = abs(float(short["strike"]) - float(long["strike"]))
+                max_loss = width_value - raw_credit
+                credit_risk_ratio = raw_credit / max_loss if max_loss > 0 else float("inf")
+                if (
+                    raw_credit <= 0
+                    or max_loss <= 0
+                    or expected_slippage_pct(short, long) > self.params.max_slippage_pct
+                ):
                     continue
                 candidate = SpreadCandidate(
                     direction=signal.direction,
@@ -372,11 +410,15 @@ class StrategyEngine:
                     short_leg=self._leg(short, "sell", expiry, option_type),
                     long_leg=self._leg(long, "buy", expiry, option_type),
                     net_credit=raw_credit,
-                    width=abs(float(short["strike"]) - float(long["strike"])),
+                    width=width_value,
                 )
-                ranked.append((score_spread(candidate, short, long, self.params), candidate))
-                if not self.params.spread_scoring_enabled:
-                    return candidate
+                ratio_distance = abs(credit_risk_ratio - self.params.target_credit_risk_ratio)
+                selection_score = (
+                    score_spread(candidate, short, long, self.params)
+                    if self.params.spread_scoring_enabled
+                    else -ratio_distance
+                )
+                ranked.append((selection_score, candidate))
                 break
 
         if not ranked:
@@ -585,7 +627,13 @@ class StrategyEngine:
             long = long_matches.iloc[0]
             raw_credit = float(short["mark"]) - float(long["mark"])
             net_credit = raw_credit * (1.0 - self.params.slippage_pct)
-            if self.params.credit_min <= net_credit <= self.params.credit_max:
+            width_value = abs(float(short["strike"]) - float(long["strike"]))
+            max_loss = width_value - net_credit
+            credit_risk_ratio = net_credit / max_loss if max_loss > 0 else float("inf")
+            if (
+                self.params.credit_min <= net_credit <= self.params.credit_max
+                and credit_risk_ratio >= self.params.min_credit_risk_ratio
+            ):
                 return SpreadCandidate(
                     direction=signal.direction,
                     expiry=expiry,

@@ -2,6 +2,7 @@ underlying: BTC
 candle_symbol: BTCUSDT
 resolution: 1h
 spread_type: directional
+bear_structure: call_credit
 
 # Supertrend signal (locked)
 supertrend_atr_period: 15
@@ -26,9 +27,11 @@ adx_period: 14
 adx_min: 0
 
 # Spread
-credit_min: 150
-credit_max: 200
+credit_min: 0
+credit_max: 10000
 spread_width: 200
+min_credit_risk_ratio: 0.00
+target_credit_risk_ratio: 1.00
 
 # Walk-forward/OOS-validated changes (see research/experiments.py):
 #   strike_offset 1.5% -> 2.0% and stop 1.5 -> 2.0 are the only two changes
@@ -37,13 +40,14 @@ spread_width: 200
 strike_offset_pct: 0.020
 
 # Exit
-tp_pct: 0.60
-sl_pct: 2.00
+tp_pct: 0.50
+stop_loss_enabled: false
 stop_loss_pct: 2.00
-take_profit_pct: 0.60
-exit_on_opposite_signal: false
+take_profit_pct: 0.50
+exit_on_opposite_signal: true
+reversal_profit_capture_pct: 0.50
 cooldown_seconds: 21600    # 6 hours
-early_exit_minutes: 240    # 4 hours
+early_exit_minutes: 0      # hold until expiry unless target/reversal exits
 max_hold_hours: 0          # 0 = disabled
 
 # Costs / contract spec

@@ -1,7 +1,7 @@
-# Shared-Core EMA Credit-Spread Strategy
+# Shared-Core Supertrend Credit-Spread Strategy
 
-Python system for a BTC EMA crossover credit-spread strategy on Delta Exchange
-India. The same pure `engine/StrategyEngine` is used by backtest and live
+Python system for a BTC Supertrend directional credit-spread strategy on Delta Exchange
+India. Bullish signals use bull put credits; bearish signals use bear call credits. The same pure `engine/StrategyEngine` is used by backtest and live
 runners; data access, order placement, polling, persistence, and logs live
 outside the engine.
 
@@ -34,9 +34,9 @@ and option chains, call engine methods, execute orders, and persist results.
 
 ## Strategy
 
-- Fast EMA crossing above slow EMA creates a `bull` signal and sells a put
+- Supertrend turning bullish creates a `bull` signal and opens a bull put
   credit spread.
-- Fast EMA crossing below slow EMA creates a `bear` signal and sells a call
+- Supertrend turning bearish creates a `bear` signal and opens a bear call
   credit spread.
 - Signals are calculated only from closed bars visible at the runner clock.
 - Optional ADX filtering blocks weak crosses when `adx_min > 0`.
@@ -63,6 +63,15 @@ quality. Every simulated trade is tagged with `data_mode: reconstructed` so
 reports are not confused with live or recorded option-chain results.
 
 ## Configuration
+
+Copy `.env.example` to `.env` and set `TRADE_QTY` to control lots directly:
+
+```env
+TRADE_QTY=1
+```
+
+This applies to live trading and the terminal backtest. The testnet demo stays
+at one lot for safety. One lot means one contract per spread leg.
 
 `engine/config_schema.py` defines the shared `StrategyParams` dataclass:
 

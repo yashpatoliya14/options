@@ -77,16 +77,19 @@ class BacktestRunner:
             )
 
             if self.position is not None:
-                close_reason = self.engine.should_close(
-                    self.position,
-                    self.executor.mark_to_market(self.position),
-                )
-                if close_reason is not None:
-                    self._close_position(now, close_reason)
-                elif self.engine.should_max_hold_exit(self.position, now):
-                    self._close_position(now, "time_exit")
-                elif hasattr(self.engine, "should_time_exit") and self.engine.should_time_exit(self.position, now):
-                    self._close_position(now, "time_exit")
+                if self._position_expired(self.position, now):
+                    self._close_position(now, "expired")
+                else:
+                    close_reason = self.engine.should_close(
+                        self.position,
+                        self.executor.mark_to_market(self.position),
+                    )
+                    if close_reason is not None:
+                        self._close_position(now, close_reason)
+                    elif self.engine.should_max_hold_exit(self.position, now):
+                        self._close_position(now, "time_exit")
+                    elif hasattr(self.engine, "should_time_exit") and self.engine.should_time_exit(self.position, now):
+                        self._close_position(now, "time_exit")
 
             raw_signal = self.engine.detect_crossover(candles)
             signal = self.gate.consume(
@@ -100,7 +103,8 @@ class BacktestRunner:
             signal_cut = False
             if self.position is not None:
                 if self.params.exit_on_opposite_signal:
-                    if not self.engine.should_cut_and_reenter(self.position, signal):
+                    current_mark = self.executor.mark_to_market(self.position)
+                    if not self.engine.should_cut_and_reenter(self.position, signal, current_mark):
                         continue
                     self._close_position(signal.timestamp, "signal_cut")
                     signal_cut = True
@@ -151,6 +155,15 @@ class BacktestRunner:
     # ------------------------------------------------------------------
     # Position lifecycle
     # ------------------------------------------------------------------
+
+    def _position_expired(self, position: SpreadPosition, now: datetime) -> bool:
+        """Close at contract settlement instead of keeping expired options open."""
+        get_expiry_datetime = getattr(self.provider, "get_expiry_datetime", None)
+        if callable(get_expiry_datetime):
+            expiry_time = get_expiry_datetime(position.expiry)
+        else:
+            expiry_time = pd.Timestamp(position.expiry, tz="UTC") + pd.Timedelta(hours=12, minutes=30)
+        return now >= expiry_time
 
     def _valid_expiries(self) -> list[str]:
         """Expiries still tradeable at the current clock time.

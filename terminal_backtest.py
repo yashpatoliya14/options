@@ -4,13 +4,15 @@ Supertrend 1H Options Backtest -- Terminal Dashboard
 SUPERTREND: 1H | ATR PERIOD: 15 | MULTIPLIER: 1.5
 
 Fetches BTCUSDT 1H candles from Binance, runs a full backtest using
-Bull Put Spread (buy signal) / Bear Put Spread (sell signal), and
+Bull Put Spread (buy signal) / Bear Call Credit Spread (sell signal), and
 prints a comprehensive terminal dashboard with all metrics.
 """
 
 import io
+import logging
 import os
 import sys
+from time import perf_counter
 
 # Force UTF-8 stdout on Windows to avoid cp1252 encoding errors
 if sys.platform == "win32":
@@ -36,17 +38,56 @@ from engine import StrategyEngine, StrategyParams
 from backtest import BacktestRunner, HistoricalDataProvider, SimulatedClock, SimulatedExecutor
 
 
+LOGGER = logging.getLogger("terminal_backtest")
+
+
+class ColorFormatter(logging.Formatter):
+    COLORS = {
+        logging.INFO: Fore.CYAN,
+        logging.WARNING: Fore.YELLOW,
+        logging.ERROR: Fore.RED,
+        logging.CRITICAL: Fore.RED,
+    }
+
+    def format(self, record: logging.LogRecord) -> str:
+        message = super().format(record)
+        color = self.COLORS.get(record.levelno, Fore.WHITE)
+        return f"{color}{message}{Style.RESET_ALL}"
+
+
+def configure_logging() -> None:
+    """Configure concise timestamped progress logs for the CLI run."""
+    handler = logging.StreamHandler()
+    handler.setFormatter(ColorFormatter(
+        "%(asctime)s | %(levelname)s | %(message)s",
+        datefmt="%H:%M:%S",
+    ))
+    logging.basicConfig(
+        level=logging.INFO,
+        handlers=[handler],
+        force=True,
+    )
+
+
+def log_completed_step(step: str, started_at: float, detail: str = "") -> None:
+    elapsed = perf_counter() - started_at
+    suffix = f" | {detail}" if detail else ""
+    LOGGER.info("completed: %s | elapsed=%.2fs%s", step, elapsed, suffix)
+
+
 # ======================================================================
 # DATA FETCHING
 # ======================================================================
 
 def fetch_binance_1h_data(symbol: str, max_candles: int = 20000) -> pd.DataFrame:
     """Fetch 1H candles from Binance with local CSV caching."""
+    started_at = perf_counter()
     cache_file = f"{symbol}_1h_cache.csv"
 
     # Load existing cache
     if os.path.exists(cache_file):
         print(f"{Fore.CYAN}  Loading cached data from {cache_file}...{Style.RESET_ALL}")
+        LOGGER.info("using local cache: %s", cache_file)
         df_cache = pd.read_csv(cache_file)
         df_cache["timestamp"] = pd.to_datetime(df_cache["timestamp"], utc=True)
         latest_ts = int(df_cache["timestamp"].max().timestamp() * 1000)
@@ -113,11 +154,18 @@ def fetch_binance_1h_data(symbol: str, max_candles: int = 20000) -> pd.DataFrame
         df = df_cache
 
     if df.empty:
+        LOGGER.warning("no candles available for %s", symbol)
         return df
 
     df = df.sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
     df.to_csv(cache_file, index=False)
-    return df.tail(max_candles).reset_index(drop=True)
+    result = df.tail(max_candles).reset_index(drop=True)
+    log_completed_step(
+        "market data fetch",
+        started_at,
+        f"candles={len(result)}; range={result['timestamp'].min()} -> {result['timestamp'].max()}",
+    )
+    return result
 
 
 # ======================================================================
@@ -194,20 +242,50 @@ def fmt_ratio(val: float) -> str:
 
 def print_section(title: str):
     """Print a section header."""
-    print(f"\n  {Fore.CYAN}{Style.BRIGHT}--- {title} {'-' * max(0, 57 - len(title))}{Style.RESET_ALL}")
+    line = "=" * 72
+    print(f"\n{Fore.CYAN}{Style.BRIGHT}{line}{Style.RESET_ALL}")
+    print(f"  {Fore.CYAN}{Style.BRIGHT}{title}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{Style.DIM}{'-' * 72}{Style.RESET_ALL}")
 
 
-def print_dashboard(result, symbol: str):
+def print_badge(label: str, value: str, color: str = Fore.WHITE) -> None:
+    print(f"  {Fore.WHITE}{label:<24}{Style.RESET_ALL}{color}{Style.BRIGHT}{value}{Style.RESET_ALL}")
+
+
+def print_strategy_panel(params: StrategyParams, symbol: str) -> None:
+    """Show the active strategy contract before performance metrics."""
+    print_section("ACTIVE STRATEGY")
+    print_badge("Market", f"{symbol} | {params.resolution}", Fore.CYAN)
+    print_badge("Signal", "Supertrend + EMA filter", Fore.YELLOW)
+    print_badge("Bull structure", "Bull put credit", Fore.GREEN)
+    print_badge("Bear structure", "Bear call credit", Fore.MAGENTA)
+    print_badge("Target credit / loss", f"{params.target_credit_risk_ratio:.2f}:1", Fore.GREEN)
+    print_badge("Stop loss", "DISABLED", Fore.YELLOW)
+    print_badge("Reversal exit", f"after {params.reversal_profit_capture_pct:.0%} capture", Fore.CYAN)
+    print_badge("Expiry hold", "ENABLED", Fore.GREEN)
+
+
+def print_dashboard(result, symbol: str, params: StrategyParams, candle_count: int | None = None):
     """Print the full terminal backtest dashboard."""
     rep = result.report
     trades = result.trades
 
     # -- Header --
     print(f"\n{Fore.YELLOW}{Style.BRIGHT}{'=' * 72}{Style.RESET_ALL}")
-    print(f"{Fore.YELLOW}{Style.BRIGHT}  SUPERTREND: 1H  |  ATR PERIOD: 15  |  MULTIPLIER: 1.5{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}{Style.BRIGHT}  BTC OPTIONS | SUPERTREND BACKTEST CONSOLE{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}{Style.DIM}  1H candles | ATR {params.supertrend_atr_period} x {params.supertrend_multiplier:.1f} | reconstructed options{Style.RESET_ALL}")
     print(f"{Fore.YELLOW}{Style.BRIGHT}{'=' * 72}{Style.RESET_ALL}")
-    print(f"  {Fore.WHITE}Asset: {symbol}   |   Data Mode: {rep['data_mode'].upper()}   |   Spread Type: Directional{Style.RESET_ALL}")
-    print(f"{Fore.YELLOW}{'-' * 72}{Style.RESET_ALL}")
+    print_strategy_panel(params, symbol)
+
+    result_color = Fore.GREEN if rep["total_pnl"] >= 0 and rep["trade_count"] > 0 else Fore.YELLOW
+    result_label = "PROFITABLE RUN" if rep["total_pnl"] > 0 else "NO PROFIT"
+    if rep["trade_count"] == 0:
+        result_label = "NO QUALIFYING TRADES"
+    print_section("RUN STATUS")
+    print_badge("Result", result_label, result_color)
+    print_badge("Data mode", rep["data_mode"].upper(), Fore.CYAN)
+    displayed_candles = f"{candle_count:,}" if candle_count is not None else "available"
+    print_badge("Candles", displayed_candles, Fore.WHITE)
 
     # -- Performance Summary --
     print_section("PERFORMANCE SUMMARY")
@@ -260,7 +338,7 @@ def print_dashboard(result, symbol: str):
     print(f"    Profit Factor:           {fmt_ratio(bps['profit_factor'])}")
     print(f"    Average P&L:             {fmt_pnl(bps['avg_pnl'])}")
 
-    print_section("BEAR PUT SPREAD PERFORMANCE (Sell Signals)")
+    print_section("BEAR CALL CREDIT SPREAD PERFORMANCE (Sell Signals)")
     brps = rep["bear_put_spread"]
     print(f"    Trades:                  {Fore.WHITE}{brps['trades']}{Style.RESET_ALL}")
     print(f"    Win Rate:                {Fore.WHITE}{brps['win_rate']*100:.2f}%{Style.RESET_ALL}")
@@ -307,7 +385,7 @@ def write_pnl_report(result, symbol: str, params: StrategyParams, filepath: str 
     w("")
     w(f"- **Asset:** {symbol}")
     w(f"- **Data Mode:** {rep['data_mode'].upper()}")
-    w(f"- **Spread Type:** Directional (Bull Put / Bear Put)")
+    w(f"- **Spread Type:** Directional (Bull Put / Bear Call Credit)")
     w(f"- **Timeframe:** {params.resolution}")
     w(f"- **Slippage:** {params.slippage_pct*100:.2f}%")
     w(f"- **Commission/leg:** ${params.commission_per_leg:.2f}")
@@ -387,7 +465,7 @@ def write_pnl_report(result, symbol: str, params: StrategyParams, filepath: str 
     w(f"| Average P&L | {_pnl(bps['avg_pnl'])} |")
     w("")
 
-    w("## Bear Put Spread Performance (Sell Signals)")
+    w("## Bear Put Credit Spread Performance (Sell Signals)")
     w("")
     brps = rep["bear_put_spread"]
     w("| Metric | Value |")
@@ -438,7 +516,17 @@ def write_pnl_report(result, symbol: str, params: StrategyParams, filepath: str 
 # ======================================================================
 
 def main():
+    configure_logging()
+    run_started_at = perf_counter()
     SYMBOL = "BTCUSDT"
+    try:
+        trade_qty = int(os.getenv("TRADE_QTY", "1"))
+    except ValueError:
+        LOGGER.error("invalid TRADE_QTY; use a positive integer")
+        return
+    if trade_qty <= 0:
+        LOGGER.error("TRADE_QTY must be greater than zero")
+        return
 
     print(f"\n{Fore.YELLOW}{Style.BRIGHT}{'=' * 72}{Style.RESET_ALL}")
     print(f"{Fore.YELLOW}{Style.BRIGHT}  SUPERTREND OPTIONS BACKTEST ENGINE{Style.RESET_ALL}")
@@ -450,6 +538,7 @@ def main():
     df = fetch_binance_1h_data(SYMBOL, max_candles=20000)
     if df.empty:
         print(f"{Fore.RED}  ERROR: No data fetched. Cannot run backtest.{Style.RESET_ALL}")
+        LOGGER.error("backtest stopped: market data is empty")
         return
 
     n_candles = len(df)
@@ -464,6 +553,7 @@ def main():
         candle_symbol=SYMBOL,
         resolution="1h",
         spread_type="directional",
+        bear_structure="call_credit",
 
         # -- Supertrend (locked to spec) --
         supertrend_atr_period=15,
@@ -480,19 +570,23 @@ def main():
         expiry_selection="nearest_valid_after_signal",
         strike_selection="atm_or_nearest_otm",
         expiry_cutoff_hour=9,
+        min_credit_risk_ratio=0.00,
+        target_credit_risk_ratio=1.00,
 
         # -- Risk / Exit --
-        tp_pct=0.60,
-        sl_pct=1.50,
-        stop_loss_pct=1.50,
-        take_profit_pct=0.60,
-        exit_on_opposite_signal=False,
+        tp_pct=0.50,
+        stop_loss_enabled=False,
+        sl_pct=2.00,
+        stop_loss_pct=2.00,
+        take_profit_pct=0.50,
+        exit_on_opposite_signal=True,
+        reversal_profit_capture_pct=0.50,
         cooldown_seconds=21600,       # 6 hours
-        early_exit_minutes=240,       # 4 hours
+        early_exit_minutes=0,          # hold until expiry unless target/reversal exits
 
         # -- Sizing & Costs --
         capital=10000.0,
-        qty=1,
+        qty=trade_qty,
         slippage_pct=0.0025,
         commission_per_leg=0.50,
         spread_width=200,
@@ -520,18 +614,36 @@ def main():
     print(f"    Starting Capital:       ${params.capital:,.2f}")
     print(f"    Slippage:               {params.slippage_pct*100:.2f}%")
     print(f"    Commission/leg:         ${params.commission_per_leg:.2f}")
+    LOGGER.info(
+        "strategy ready: symbol=%s; timeframe=%s; signal=supertrend; spread=directional",
+        SYMBOL,
+        params.resolution,
+    )
 
     # 3. Run backtest
+    backtest_started_at = perf_counter()
     print(f"\n{Fore.CYAN}{Style.BRIGHT}[3/3] Running Backtest{Style.RESET_ALL}")
     result = runner.run()
     print(f"  {Fore.GREEN}OK: Backtest complete -- {len(result.trades)} trades{Style.RESET_ALL}")
+    log_completed_step(
+        "backtest simulation",
+        backtest_started_at,
+        f"trades={len(result.trades)}; pnl=${result.report['total_pnl']:+,.2f}",
+    )
 
     # 4. Print dashboard
-    print_dashboard(result, "BTC")
+    print_dashboard(result, "BTC", params, candle_count=n_candles)
 
     # 5. Write markdown P&L report
     report_path = write_pnl_report(result, "BTC", params)
     print(f"  {Fore.GREEN}OK: P&L report saved to {report_path}{Style.RESET_ALL}\n")
+    log_completed_step("P&L report generation", run_started_at, f"file={report_path}")
+    LOGGER.info(
+        "run complete: trades=%d; ending_capital=$%s; total_elapsed=%.2fs",
+        len(result.trades),
+        f"{result.report['ending_capital']:,.2f}",
+        perf_counter() - run_started_at,
+    )
 
 
 if __name__ == "__main__":

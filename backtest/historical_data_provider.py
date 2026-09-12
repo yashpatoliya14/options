@@ -116,6 +116,10 @@ class HistoricalDataProvider(DataProvider):
         # expiring at 12:30 UTC today cannot be traded at 13:00 UTC.
         return [e for e in expiries if self._expiry_datetime(e) > now]
 
+    def get_expiry_datetime(self, expiry_date: str) -> datetime:
+        """Return the actual UTC settlement timestamp for an expiry date."""
+        return self._expiry_datetime(expiry_date)
+
     def get_option_chain(self, underlying: str, expiry_date: str) -> pd.DataFrame:
         now = self.clock.now()
         spot = self._spot_as_of(now)
