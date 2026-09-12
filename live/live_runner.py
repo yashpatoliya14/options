@@ -99,16 +99,17 @@ class LiveRunner:
                 except Exception as exc:
                     print(f"[WARN] Watchdog check failed: {exc}")
 
-            # Check TP/SL exit
-            close_reason = self.engine.should_close(
-                self.position,
-                self.executor.mark_to_market(self.position),
-            )
-            if close_reason is not None:
-                self._close_position(now, close_reason)
-            # Check time-based exit
-            elif hasattr(self.engine, "should_time_exit") and self.engine.should_time_exit(self.position, now):
-                self._close_position(now, "time_exit")
+            # Check TP/SL exit only if position was not closed by the watchdog
+            if self.position is not None:
+                close_reason = self.engine.should_close(
+                    self.position,
+                    self.executor.mark_to_market(self.position),
+                )
+                if close_reason is not None:
+                    self._close_position(now, close_reason)
+                # Check time-based exit
+                elif hasattr(self.engine, "should_time_exit") and self.engine.should_time_exit(self.position, now):
+                    self._close_position(now, "time_exit")
 
         signal = self.gate.consume(
             self.engine.detect_crossover(candles),
