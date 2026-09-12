@@ -250,7 +250,8 @@ class LiveExecutor(OrderExecutor):
             response = self._post_with_retries("/v2/orders/bracket", body)
             result = response.get("result", {})
             return str(result.get("id")) if result.get("id") is not None else None
-        except Exception:
+        except Exception as e:
+            print(f"[DEBUG] _place_exchange_stop failed: {e}")
             return None
 
     def _post_with_retries(self, path: str, body: dict) -> dict:
