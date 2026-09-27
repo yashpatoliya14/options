@@ -110,10 +110,23 @@ class LiveRunner:
             return self._und.spot_at(_now())
         raise RuntimeError("no price available yet")
 
+    # run-mode badge shown on every Telegram card
+    _BADGE = {"PLACE·TESTNET": "🧪 Testnet", "PLACE·LIVE": "🔴 LIVE money",
+              "DRY-RUN": "📝 Dry-run"}
+    _RULE = "━━━━━━━━━━━━━━━━━━"
+
     def _notify(self, msg: str) -> None:
-        """Log locally and push a Telegram alert (tagged with the run mode)."""
+        """Log locally and push a plain Telegram line (tagged with the run mode)."""
         _log(msg)
         self.tg.send(f"[{self.tag}] {msg}")
+
+    def _alert(self, emoji: str, title: str, rows: list[str], log_msg: str) -> None:
+        """Log a plain one-liner and push a formatted HTML card to Telegram."""
+        _log(log_msg)
+        badge = self._BADGE.get(self.tag, self.tag)
+        card = [f"{emoji} <b>{title}</b>", f"<i>{badge}</i>", self._RULE, *rows,
+                self._RULE, f"<i>{datetime.now(timezone.utc):%Y-%m-%d %H:%M:%S UTC}</i>"]
+        self.tg.send("\n".join(card))
 
     # --- market data: live index (WebSocket) -------------------------------
     def _on_open(self, ws) -> None:
@@ -192,9 +205,15 @@ class LiveRunner:
                         "fut_id": None, "opt_symbol": opt["symbol"],
                         "opt_settle": self._settle_ts(opt),
                         "opt_strike": int(float(opt["strike_price"]))}
-            self._notify(f"ENTRY {bias} — {'LONG' if trend>0 else 'SHORT'} {self.qty} {self.symbol} @ {spot:,.1f}, "
-                         f"SL {stop:,.1f}, SELL {opt['symbol']} (settles "
-                         f"{self.pos['opt_settle']:%H:%M UTC}) [dry-run]")
+            self._alert(
+                "🟢" if trend > 0 else "🔴", f"ENTRY · {bias}",
+                [f"{'📈 LONG' if trend>0 else '📉 SHORT'} <b>{self.qty}</b> {self.symbol} @ <code>{spot:,.1f}</code>",
+                 f"🛑 Stop-loss @ <code>{stop:,.1f}</code>",
+                 f"💸 Sold <code>{opt['symbol']}</code>",
+                 f"⏱ Settles <b>{self.pos['opt_settle']:%H:%M UTC}</b>"],
+                f"ENTRY {bias} — {'LONG' if trend>0 else 'SHORT'} {self.qty} {self.symbol} @ {spot:,.1f}, "
+                f"SL {stop:,.1f}, SELL {opt['symbol']} (settles "
+                f"{self.pos['opt_settle']:%H:%M UTC}) [dry-run]")
             return
 
         fut = self.broker.perpetual(self.symbol)
@@ -212,9 +231,15 @@ class LiveRunner:
         self.store.log("ENTRY", bias=bias, side=trend, symbol=self.symbol,
                        strike=self.pos["opt_strike"], price=entry,
                        detail=f"SL {stop:.1f} (id {sl_id}), SOLD {opt['symbol']}")
-        self._notify(f"ENTRY {bias} — {'LONG' if trend>0 else 'SHORT'} {self.qty} {self.symbol} filled @ {entry:,.1f}, "
-                     f"stop {stop:,.1f} (id {sl_id}), SOLD {opt['symbol']} "
-                     f"(settles {self.pos['opt_settle']:%H:%M UTC})")
+        self._alert(
+            "🟢" if trend > 0 else "🔴", f"ENTRY · {bias}",
+            [f"{'📈 LONG' if trend>0 else '📉 SHORT'} <b>{self.qty}</b> {self.symbol} filled @ <code>{entry:,.1f}</code>",
+             f"🛑 Stop-loss @ <code>{stop:,.1f}</code>  <i>(id {sl_id})</i>",
+             f"💸 Sold <code>{opt['symbol']}</code>",
+             f"⏱ Settles <b>{self.pos['opt_settle']:%H:%M UTC}</b>"],
+            f"ENTRY {bias} — {'LONG' if trend>0 else 'SHORT'} {self.qty} {self.symbol} filled @ {entry:,.1f}, "
+            f"stop {stop:,.1f} (id {sl_id}), SOLD {opt['symbol']} "
+            f"(settles {self.pos['opt_settle']:%H:%M UTC})")
 
     def handle_expiry(self) -> None:
         spot = self.current_spot()
@@ -232,8 +257,15 @@ class LiveRunner:
                 self.store.close_open(p, "take_profit")
                 self.store.log("TAKE_PROFIT", bias=p["bias"], side=p["side"],
                                symbol=self.symbol, price=spot)
-            self._notify(f"TAKE-PROFIT {p['bias']} — spot {spot:,.1f} beyond entry "
-                         f"{p['entry']:,.1f}: CLOSED future + cancelled stop. Now flat.")
+            gain = abs(spot - p["entry"])
+            self._alert(
+                "💰", f"TAKE-PROFIT · {p['bias']}",
+                [f"Spot <code>{spot:,.1f}</code> beyond entry <code>{p['entry']:,.1f}</code>",
+                 f"📊 Move in favour: <b>{gain:,.1f}</b>",
+                 "✅ Closed future + cancelled stop",
+                 "⚪ Now flat — awaiting next signal"],
+                f"TAKE-PROFIT {p['bias']} — spot {spot:,.1f} beyond entry "
+                f"{p['entry']:,.1f}: CLOSED future + cancelled stop. Now flat.")
             self.pos = None                       # go flat; next loop re-enters on trend
             return
 
@@ -252,19 +284,37 @@ class LiveRunner:
             self.store.update_option(self.pos)
             self.store.log("ROLL", bias=p["bias"], side=p["side"],
                            symbol=opt["symbol"], strike=self.pos["opt_strike"], price=spot)
-        self._notify(f"ROLL {p['bias']} — spot {spot:,.1f} vs entry {p['entry']:,.1f}: "
-                     f"SOLD {opt['symbol']} (settles {self.pos['opt_settle']:%H:%M UTC}), "
-                     "future kept open.")
+        self._alert(
+            "🔄", f"ROLL · {p['bias']}",
+            [f"Spot <code>{spot:,.1f}</code> vs entry <code>{p['entry']:,.1f}</code> — not beyond yet",
+             f"💸 Sold new <code>{opt['symbol']}</code>",
+             f"⏱ Settles <b>{self.pos['opt_settle']:%H:%M UTC}</b>",
+             "📌 Future kept open"],
+            f"ROLL {p['bias']} — spot {spot:,.1f} vs entry {p['entry']:,.1f}: "
+            f"SOLD {opt['symbol']} (settles {self.pos['opt_settle']:%H:%M UTC}), "
+            "future kept open.")
 
     # --- main loop ---------------------------------------------------------
     def run(self) -> None:
         mode = "PLACE (TESTNET)" if (self.place and self.broker.testnet) else \
                "PLACE **LIVE**" if self.place else "DRY-RUN"
-        self._notify(f"live runner starting — mode: {mode}, endpoint: {self.broker.base}")
+        self._alert(
+            "🚀", "Live Runner Started",
+            [f"⚙️ Mode: <b>{mode}</b>",
+             f"🔗 Endpoint: <code>{self.broker.base}</code>",
+             f"📐 SuperTrend {self.cfg.st_timeframe_hours}h · ATR{self.cfg.st_atr_period} · ×{self.cfg.st_multiplier}",
+             f"📦 Size: <b>{self.qty}</b> {self.symbol}"],
+            f"live runner starting — mode: {mode}, endpoint: {self.broker.base}")
         if self.pos is not None:
-            self._notify(f"RESUMED open {self.pos['bias']} position from state "
-                         f"(entry {self.pos['entry']:,.1f}, short {self.pos['opt_symbol']}, "
-                         f"settles {self.pos['opt_settle']:%H:%M UTC}) — managing it, NOT opening a new trade.")
+            self._alert(
+                "🔄", "Resumed Open Position",
+                [f"<b>{self.pos['bias']}</b> · entry <code>{self.pos['entry']:,.1f}</code>",
+                 f"💸 Short <code>{self.pos['opt_symbol']}</code>",
+                 f"⏱ Settles <b>{self.pos['opt_settle']:%H:%M UTC}</b>",
+                 "🛡 Managing existing trade — <b>no new entry</b>"],
+                f"RESUMED open {self.pos['bias']} position from state "
+                f"(entry {self.pos['entry']:,.1f}, short {self.pos['opt_symbol']}, "
+                f"settles {self.pos['opt_settle']:%H:%M UTC}) — managing it, NOT opening a new trade.")
         self.refresh_trend()
         threading.Thread(target=self._ws_thread, daemon=True).start()
 
