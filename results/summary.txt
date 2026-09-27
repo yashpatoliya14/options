@@ -1,0 +1,13 @@
+==============================================================
+BTCUSD SuperTrend-Directional Premium Harvest — Backtest
+==============================================================
+Total trades:        258  (240 options, 18 futures)
+Win rate:            207/258 (80.2%)
+Total P&L:           $37.48
+  Premium (options): $-0.63  (win 82.9%)
+  Directional (fut): $38.11  (win 44.4%)
+Avg premium/option:  $-0.00
+Total fees:          $6.54
+Max drawdown:        $16.48
+Ending equity:       $37.45
+==============================================================
