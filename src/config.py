@@ -25,6 +25,7 @@ CACHE_DIR = DATA_DIR / "cache"
 TAPE_DATASET = CACHE_DIR / "tape"           # partitioned parquet dataset (by expiry)
 INDEX_CACHE = CACHE_DIR / "btc_index.parquet"
 RESULTS_DIR = ROOT / "results"
+STATE_DB = ROOT / "state.db"                # live runner's durable position + trade log
 
 # --- Delta Exchange -------------------------------------------------------
 DELTA_BASE = "https://api.india.delta.exchange"

@@ -3,6 +3,7 @@
 *.pyc
 /data
 *__pycache__/
+*.db
 
 
 

@@ -44,6 +44,7 @@ from underlying import Underlying
 from supertrend import TrendFilter
 from delta_broker import DeltaBroker
 from notify import Telegram
+from store import Store
 
 STRIKE_STEP = 200
 WARMUP_DAYS = 40                 # history pulled to warm the 8h SuperTrend
@@ -81,8 +82,11 @@ class LiveRunner:
         self._und: Underlying | None = None
         self._trend_ts = 0.0
         self._stop = threading.Event()
-        # position state (in-memory): None when flat
-        self.pos: dict | None = None
+        # durable position state: reload any still-open position so an accidental
+        # restart manages the live trade instead of opening a second one.
+        # DB path is a fixed constant (STATE_DB in config.py), not an env var.
+        self.store = Store()
+        self.pos: dict | None = self.store.load_open()
 
     # --- market data: SuperTrend (REST) ------------------------------------
     def refresh_trend(self) -> None:
@@ -163,6 +167,10 @@ class LiveRunner:
 
     # --- strategy actions --------------------------------------------------
     def open_position(self) -> None:
+        # never open a second trade on top of a placed one that survived a restart
+        if self.place and self.store.load_open() is not None:
+            self.pos = self.store.load_open()
+            return
         now = _now()
         trend = self._trend_filter.direction_at(now)
         if trend is None:
@@ -200,6 +208,10 @@ class LiveRunner:
                     "fut_id": fut["id"], "opt_symbol": opt["symbol"],
                     "opt_settle": self._settle_ts(opt),
                     "opt_strike": int(float(opt["strike_price"]))}
+        self.store.save_open(self.pos)          # durable: survives a restart
+        self.store.log("ENTRY", bias=bias, side=trend, symbol=self.symbol,
+                       strike=self.pos["opt_strike"], price=entry,
+                       detail=f"SL {stop:.1f} (id {sl_id}), SOLD {opt['symbol']}")
         self._notify(f"ENTRY {bias} — {'LONG' if trend>0 else 'SHORT'} {self.qty} {self.symbol} filled @ {entry:,.1f}, "
                      f"stop {stop:,.1f} (id {sl_id}), SOLD {opt['symbol']} "
                      f"(settles {self.pos['opt_settle']:%H:%M UTC})")
@@ -217,6 +229,9 @@ class LiveRunner:
                 self.broker.place_market_order(p["fut_id"], self.qty, close_side)
                 if p["sl_id"]:
                     self.broker.cancel_order(p["fut_id"], p["sl_id"])
+                self.store.close_open(p, "take_profit")
+                self.store.log("TAKE_PROFIT", bias=p["bias"], side=p["side"],
+                               symbol=self.symbol, price=spot)
             self._notify(f"TAKE-PROFIT {p['bias']} — spot {spot:,.1f} beyond entry "
                          f"{p['entry']:,.1f}: CLOSED future + cancelled stop. Now flat.")
             self.pos = None                       # go flat; next loop re-enters on trend
@@ -233,6 +248,10 @@ class LiveRunner:
         self.pos["opt_symbol"] = opt["symbol"]
         self.pos["opt_settle"] = self._settle_ts(opt)
         self.pos["opt_strike"] = int(float(opt["strike_price"]))
+        if self.place:
+            self.store.update_option(self.pos)
+            self.store.log("ROLL", bias=p["bias"], side=p["side"],
+                           symbol=opt["symbol"], strike=self.pos["opt_strike"], price=spot)
         self._notify(f"ROLL {p['bias']} — spot {spot:,.1f} vs entry {p['entry']:,.1f}: "
                      f"SOLD {opt['symbol']} (settles {self.pos['opt_settle']:%H:%M UTC}), "
                      "future kept open.")
@@ -242,6 +261,10 @@ class LiveRunner:
         mode = "PLACE (TESTNET)" if (self.place and self.broker.testnet) else \
                "PLACE **LIVE**" if self.place else "DRY-RUN"
         self._notify(f"live runner starting — mode: {mode}, endpoint: {self.broker.base}")
+        if self.pos is not None:
+            self._notify(f"RESUMED open {self.pos['bias']} position from state "
+                         f"(entry {self.pos['entry']:,.1f}, short {self.pos['opt_symbol']}, "
+                         f"settles {self.pos['opt_settle']:%H:%M UTC}) — managing it, NOT opening a new trade.")
         self.refresh_trend()
         threading.Thread(target=self._ws_thread, daemon=True).start()
 
