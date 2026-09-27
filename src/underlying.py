@@ -73,9 +73,10 @@ class Underlying:
 
     def spot_at(self, ts: pd.Timestamp) -> float:
         """Nearest candle close at/around ts (backward-then-nearest fill)."""
-        ts = pd.Timestamp(ts)
-        idx = self._c.index
-        pos = idx.searchsorted(ts, side="right") - 1
+        # match resolutions: the parquet round-trip can leave the index at µs while
+        # `ts` (Timestamp.now()) is ns — mismatched units break searchsorted.
+        idx = self._c.index.as_unit("ns")
+        pos = idx.searchsorted(pd.Timestamp(ts).as_unit("ns"), side="right") - 1
         if pos < 0:
             pos = 0
         return float(self._c["close"].iloc[pos])

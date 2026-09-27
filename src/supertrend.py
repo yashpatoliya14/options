@@ -101,8 +101,11 @@ class TrendFilter:
         return cls(st[["signals", "upperband", "lowerband"]])
 
     def _pos_at(self, ts: pd.Timestamp) -> int:
-        idx = self._sig.index
-        return idx.searchsorted(pd.Timestamp(ts), side="right") - 1
+        # Normalise both sides to nanosecond resolution: `ts` (e.g. Timestamp.now())
+        # is ns, while the resampled candle index may be a coarser unit (s/us).
+        # Comparing mismatched resolutions raises "Cannot losslessly convert units".
+        idx = self._sig.index.as_unit("ns")
+        return idx.searchsorted(pd.Timestamp(ts).as_unit("ns"), side="right") - 1
 
     def direction_at(self, ts: pd.Timestamp) -> int | None:
         """+1 (up) / -1 (down) from the last *closed* higher-timeframe candle.
