@@ -291,7 +291,7 @@ class LiveRunner:
 
         if profit:
             _log(f"EXPIRY {p['bias']}: spot {spot:,.1f} beyond entry {p['entry']:,.1f} "
-                 "-> CLOSE future + cancel stop (take profit)")
+                 "-> CUT ALL (take profit) + re-enter fresh on current signal")
             if self.place:
                 close_side = "sell" if p["side"] > 0 else "buy"
                 self.broker.place_market_order(p["fut_id"], self.qty, close_side)
@@ -305,11 +305,17 @@ class LiveRunner:
                 "💰", f"TAKE-PROFIT · {p['bias']}",
                 [f"Spot <code>{spot:,.1f}</code> beyond entry <code>{p['entry']:,.1f}</code>",
                  f"📊 Move in favour: <b>{gain:,.1f}</b>",
-                 "✅ Closed future + cancelled stop",
-                 "⚪ Now flat — awaiting next signal"],
+                 "✅ Cut all — closed future + cancelled stop",
+                 "🔁 Re-entering now: SL on the SuperTrend line, ATM option sold at current price"],
                 f"TAKE-PROFIT {p['bias']} — spot {spot:,.1f} beyond entry "
-                f"{p['entry']:,.1f}: CLOSED future + cancelled stop. Now flat.")
-            self.pos = None                       # go flat; next loop re-enters on trend
+                f"{p['entry']:,.1f}: CUT ALL (closed future + cancelled stop), "
+                "re-entering fresh on the current SuperTrend signal.")
+            self.pos = None
+            # User rule: on a profitable cut, don't wait for the next loop tick — open
+            # a fresh position right away. open_position() takes the trade at the
+            # CURRENT price, sets the stop on the NEAREST SuperTrend line (not the old
+            # entry), and SELLS a new ATM option, following whatever the trend is now.
+            self.open_position()
             return
 
         # ROLL: sell a new option struck at the future entry price

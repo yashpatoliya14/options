@@ -125,18 +125,23 @@ class TrendFilter:
         """SuperTrend trailing-line level to use as the future's stop-loss.
 
         In an up-trend the line is the lowerband (stop below price); in a
-        down-trend it is the upperband (stop above price). Read from the same
-        last-closed candle as `direction_at`, so it is the level the SuperTrend
-        would flip on.
+        down-trend it is the upperband (stop above price).
+
+        `signals` is `.shift(1)`-ed but the bands are NOT, so `_sig.iloc[pos]`
+        is the raw signal of the *last closed* candle (pos-1) while the band at
+        the same row `pos` belongs to the currently-forming candle (live) / a
+        look-ahead bin (backtest). Read the band from `pos-1` so the stop level
+        is the finalised SuperTrend flip line of the same closed candle the
+        direction is taken from — stable, and free of incomplete/future data.
         """
         pos = self._pos_at(ts)
-        if pos < 0:
+        if pos < 1:                      # need pos-1 >= 0 for the closed-candle band
             return None
         v = self._sig.iloc[pos]
         if pd.isna(v) or v == 0:
             return None
         band = "lowerband" if v > 0 else "upperband"
-        return float(self._f[band].iloc[pos])
+        return float(self._f[band].iloc[pos - 1])
 
 
 # --------------------------------------------------------------------------
