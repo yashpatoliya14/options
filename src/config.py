@@ -37,10 +37,11 @@ SETTLEMENT_HOUR_UTC = 12                    # Delta BTC options settle at 12:00 
 @dataclass
 class StrategyConfig:
     # --- SuperTrend trend filter (higher timeframe) ---
-    # NOTE: the video shows a 4h filter, but on this data 4h whipsaws badly (the
-    # "loophole" the video itself warns about) and the directional leg bleeds.
-    # An 8h filter rides the 2026 trends instead of getting chopped -> profitable.
-    st_timeframe_hours: int = 8             # resample the 1h index to this candle size
+    # 4h filter (matches the reference video). NOTE: 4h reacts faster but whipsaws
+    # more than 8h — on the Aug–Sep 2026 index it flips ~9x/40d vs ~4x for 8h.
+    # If false signals bite, raise st_multiplier to ~4.0 (that pulls 4h back to ~4
+    # flips/40d) rather than dropping back to 8h.
+    st_timeframe_hours: int = 4             # resample the 1h index to this candle size
     st_atr_period: int = 15                 # ATR lookback for SuperTrend (matches reference)
     st_multiplier: float = 3.0              # SuperTrend band multiplier
 
