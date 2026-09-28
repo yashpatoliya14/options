@@ -133,6 +133,19 @@ class DeltaBroker:
         front = [p for p in chain if p["settlement_time"] == nearest_exp]
         return min(front, key=lambda p: abs(float(p["strike_price"]) - strike))
 
+    def product_by_symbol(self, symbol: str) -> dict | None:
+        """Resolve a live option product by its full symbol (e.g. 'C-BTC-85000-280926').
+
+        Returns None if it is no longer live (already settled) — then there is
+        nothing to close. Used to buy back a short option leg when the future's
+        stop-loss fires or the position is closed outside the runner.
+        """
+        ctype = "call_options" if symbol.upper().startswith("C") else "put_options"
+        for p in self._products(ctype):
+            if p.get("symbol") == symbol:
+                return p
+        return None
+
 
     # --- orders ------------------------------------------------------------
     def place_market_order(self, product_id: int, size: int, side: str) -> dict:

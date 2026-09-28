@@ -264,24 +264,40 @@ class LiveRunner:
             return
         if size != 0:
             return                                # still open on the exchange — nothing to do
-        # future leg is gone: cancel any resting stop, mark closed, go flat.
+        # future leg is gone (stop-loss fired or manual close). Cancel any resting stop,
+        # BUY BACK the short option leg (the stop only closes the future — the option is
+        # a separate contract and would otherwise sit naked until settlement), mark
+        # closed, go flat. The main loop then re-enters immediately on the current signal.
         if self.pos.get("sl_id"):
             try:
                 self.broker.cancel_order(fut_id, self.pos["sl_id"])
             except Exception:
                 pass
+        opt_symbol = self.pos.get("opt_symbol")
+        opt_closed = False
+        if opt_symbol:
+            try:
+                opt = self.broker.product_by_symbol(opt_symbol)
+                if opt is not None:               # still live -> buy it back to close the short
+                    self.broker.place_market_order(opt["id"], self.qty, "buy")
+                    opt_closed = True
+            except Exception as e:
+                _log(f"option buy-back failed for {opt_symbol}: {e}")
         bias = self.pos["bias"]
         self.store.close_open(self.pos, "closed_externally")
         self.store.log("EXTERNAL_CLOSE", bias=bias, side=self.pos["side"],
-                       symbol=self.symbol, detail="future flat on exchange")
+                       symbol=self.symbol,
+                       detail=f"future flat; option {'bought back' if opt_closed else 'already settled'}")
         self._alert(
             "⚪", "Position Closed Externally",
-            [f"<b>{bias}</b> future no longer on the exchange",
-             "🧹 Cancelled resting stop, marked closed",
-             "⚠️ If a short option is still open, close it manually",
-             "⚪ Now flat — will re-enter on the next SuperTrend signal"],
-            f"EXTERNAL CLOSE {bias} — future flat on exchange (manual close / stop "
-            "fired): cancelled stop, marked closed. Now flat, re-entering on signal.")
+            [f"<b>{bias}</b> future gone (stop-loss fired / manual close)",
+             "🧹 Cancelled resting stop",
+             ("💸 Bought back the short option leg" if opt_closed
+              else "ℹ️ Short option already settled — nothing to close"),
+             "🔁 Re-entering now on the current SuperTrend signal"],
+            f"EXTERNAL CLOSE {bias} — future flat (stop fired / manual close): cancelled "
+            f"stop, option {'bought back' if opt_closed else 'already settled'}. "
+            "Re-entering now on the current signal.")
         self.pos = None
 
     def handle_expiry(self) -> None:
