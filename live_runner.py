@@ -275,10 +275,22 @@ class LiveRunner:
         _log(f"EXPIRY {p['bias']}: spot {spot:,.1f} not beyond entry {p['entry']:,.1f} "
              f"-> ROLL: SELL {opt_type} @ {strike:,}")
         opt = self.broker.option_by_strike(strike, opt_type, self.asset)
+        new_settle = self._settle_ts(opt)
+        # SAFETY NET: never roll into a contract that is already settled. If we did,
+        # opt_settle would stay <= now and the main loop would re-enter handle_expiry
+        # every cycle — spamming Telegram (and, in --place, firing a SELL) every 5s.
+        # broker.option_by_strike already filters to future expiries; this guards a
+        # bad/edge API response too. Back off a few minutes instead of hammering.
+        if new_settle <= _now():
+            _log(f"ROLL skipped: nearest {opt_type} {opt['symbol']} settles "
+                 f"{new_settle:%Y-%m-%d %H:%M UTC}, not in the future — backing off 5 min "
+                 "(no order sent, no alert)")
+            self.pos["opt_settle"] = _now() + pd.Timedelta(minutes=5)
+            return
         if self.place:
             self.broker.place_market_order(opt["id"], self.qty, "sell")
         self.pos["opt_symbol"] = opt["symbol"]
-        self.pos["opt_settle"] = self._settle_ts(opt)
+        self.pos["opt_settle"] = new_settle
         self.pos["opt_strike"] = int(float(opt["strike_price"]))
         if self.place:
             self.store.update_option(self.pos)
