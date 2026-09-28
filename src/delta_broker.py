@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 import requests
+import pandas as pd
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
@@ -89,25 +90,40 @@ class DeltaBroker:
                 return p
         raise RuntimeError(f"Perpetual {symbol} not found on {self.base}")
 
+    @staticmethod
+    def _future_chain(chain: list, asset: str, ctype: str, base: str) -> list:
+        """Options for `asset` whose settlement is strictly in the future.
+
+        A daily 0DTE contract stays listed as "live" for a while after it settles
+        (12:00 UTC), so filtering on settlement_time > now is what stops a roll
+        from re-selecting the contract that just expired (which would make the
+        runner roll — and, in --place mode, SELL — every loop). See the roll path.
+        """
+        now = pd.Timestamp.now(tz="UTC")
+        out = []
+        for p in chain:
+            if p.get("underlying_asset", {}).get("symbol") != asset:
+                continue
+            if pd.Timestamp(p["settlement_time"]).tz_convert("UTC") <= now:
+                continue                      # already settled — never select it
+            out.append(p)
+        if not out:
+            raise RuntimeError(f"No unexpired {asset} {ctype} on {base}")
+        return out
+
     def atm_option(self, spot: float, opt_type: str, asset: str = "BTC") -> dict:
-        """Nearest-expiry option whose strike is closest to spot. opt_type: 'C'/'P'."""
+        """Nearest *future* expiry option whose strike is closest to spot. 'C'/'P'."""
         ctype = "call_options" if opt_type == "C" else "put_options"
-        chain = [p for p in self._products(ctype)
-                 if p.get("underlying_asset", {}).get("symbol") == asset]
-        if not chain:
-            raise RuntimeError(f"No live {asset} {ctype} on {self.base}")
+        chain = self._future_chain(self._products(ctype), asset, ctype, self.base)
         nearest_exp = min(p["settlement_time"] for p in chain)
         front = [p for p in chain if p["settlement_time"] == nearest_exp]
         return min(front, key=lambda p: abs(float(p["strike_price"]) - spot))
 
     def option_by_strike(self, strike: float, opt_type: str, asset: str = "BTC") -> dict:
-        """Nearest-expiry option at (or closest to) a specific strike. Used to
-        roll into a new short option struck at the future's entry price."""
+        """Nearest *future* expiry option at (or closest to) a specific strike.
+        Used to roll into a new short option struck at the future's entry price."""
         ctype = "call_options" if opt_type == "C" else "put_options"
-        chain = [p for p in self._products(ctype)
-                 if p.get("underlying_asset", {}).get("symbol") == asset]
-        if not chain:
-            raise RuntimeError(f"No live {asset} {ctype} on {self.base}")
+        chain = self._future_chain(self._products(ctype), asset, ctype, self.base)
         nearest_exp = min(p["settlement_time"] for p in chain)
         front = [p for p in chain if p["settlement_time"] == nearest_exp]
         return min(front, key=lambda p: abs(float(p["strike_price"]) - strike))
