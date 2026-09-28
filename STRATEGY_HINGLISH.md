@@ -84,14 +84,25 @@ Future ko **open hi rakho**, sirf ek **naya option** bech do jiska strike = futu
 
 ---
 
-## 6. Position tracking / reconciliation
+## 6. Position tracking / reconciliation (SL lagne par kya hota hai)
 
 - Algo apni position **SQLite (`state.db`)** mein durable save karta hai. Restart hone
   par wahi open trade resume hota hai, do baar trade nahi khulta.
-- Har ~30 second mein algo exchange se check karta hai ki future sach mein zinda hai ya nahi
-  (`position_size`). Agar aapne **manually Delta pe position band kar di** (ya stop-loss
-  lag gaya), to algo samajh jaata hai, state ko flat kar deta hai, aur agle signal par
-  naya trade le leta hai.
+- Har ~30 second mein algo exchange se check karta hai ki future zinda hai ya nahi
+  (`position_size`).
+- **Jab bhi stop-loss lag jaaye (ya aap manually Delta pe future band kar do), tab:**
+  1. Resting stop cancel karo.
+  2. **Option wala leg turant close karo** — short option ko wapas **buy back** kar
+     lete hain (stop sirf future band karta hai, option alag contract hai jo warna
+     apni expiry tak naked/short pada rehta). Agar option pehle hi settle ho chuka hai
+     to kuch karne ki zaroorat nahi.
+  3. State ko **flat** kar do.
+  4. **Turant naya trade lo** current SuperTrend direction ke hisaab se (ussi loop mein,
+     agle expiry ka intezaar nahi) — future current price par, stop ST-line par, naya ATM sell.
+
+> Matlab SL kabhi bhi lage — din ke beech mein bhi — algo future + option dono band
+> karke, foran nayi direction mein nayi entry le leta hai. (Detection ~30s ke andar,
+> kyunki position har 30s check hoti hai.)
 
 ---
 
@@ -124,8 +135,9 @@ Future ko **open hi rakho**, sirf ek **naya option** bech do jiska strike = futu
 
 - **4h SuperTrend zyada whipsaw karta hai** 8h ke muqable (~2x flips). Agar false signals
   se nuksaan ho, to `st_multiplier` ko 4.0 kar dena (4h ko 8h jaisa stable bana deta hai).
-- Stop-loss exchange par rehta hai — lekin option leg stop se protected nahi hoti,
-  wo apni expiry (5:30 PM IST) tak short rehti hai.
+- Stop-loss exchange par rehta hai. Jab stop lagta hai, algo ~30s ke andar option leg
+  bhi buy-back karke band kar deta hai — isliye option zyada der naked nahi rehti (par
+  ~30s ka thoda window ho sakta hai jab tak detect na ho).
 - Live mode mein har order asli paisa hai. Pehle testnet/dry-run par test karo.
 - Time hamesha **UTC** mein sochna: 12:00 UTC = 5:30 PM IST (settlement).
 
@@ -138,5 +150,6 @@ Flat?  → SuperTrend padho → direction mein future + ST-line stop + ATM optio
 Open?  → 5:30 PM IST (expiry) tak wait (stop exchange sambhaal raha hai)
 Expiry → future profit?  → CUT ALL + turant naya trade (ST-line stop, current price, ATM sell)
                           → nahi?  → ROLL (future rakho, naya option entry-strike par sell)
-Beech mein manual close / stop lag gaya? → reconcile → flat → agle signal par naya trade
+SL laga (kabhi bhi) / manual close? → future gaya → option leg buy-back karke close →
+                                      flat → TURANT nayi entry current direction mein
 ```
