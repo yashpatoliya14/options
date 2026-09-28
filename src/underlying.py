@@ -54,17 +54,27 @@ class Underlying:
     @classmethod
     def load(cls, start: pd.Timestamp, end: pd.Timestamp, force: bool = False) -> "Underlying":
         if INDEX_CACHE.exists() and not force:
-            cached = pd.read_parquet(INDEX_CACHE)
-            cached["dt"] = pd.to_datetime(cached["dt"], utc=True)
-            have_start, have_end = cached["dt"].min(), cached["dt"].max()
-            if have_start <= start and have_end >= end:
-                return cls(cached)
+            try:
+                cached = pd.read_parquet(INDEX_CACHE)
+            except (ImportError, OSError, ValueError):
+                cached = None                    # no parquet engine / corrupt cache -> refetch
+            if cached is not None:
+                cached["dt"] = pd.to_datetime(cached["dt"], utc=True)
+                have_start, have_end = cached["dt"].min(), cached["dt"].max()
+                if have_start <= start and have_end >= end:
+                    return cls(cached)
         s = int(pd.Timestamp(start).timestamp())
         e = int(pd.Timestamp(end).timestamp())
         candles = _fetch_range(INDEX_SYMBOL, s, e, resolution="1h")
         if candles.empty:
             raise RuntimeError(f"No {INDEX_SYMBOL} candles returned for {start}..{end}")
-        candles.to_parquet(INDEX_CACHE, index=False)
+        # Caching is best-effort: the live runner passes force=True and only needs the
+        # candles in memory, so a missing parquet engine (pyarrow/fastparquet) must NOT
+        # crash the service — just skip the cache write.
+        try:
+            candles.to_parquet(INDEX_CACHE, index=False)
+        except (ImportError, OSError, ValueError):
+            pass
         return cls(candles)
 
     def candles(self) -> pd.DataFrame:

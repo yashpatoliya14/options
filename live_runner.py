@@ -49,6 +49,7 @@ from store import Store
 STRIKE_STEP = 200
 WARMUP_DAYS = 40                 # history pulled to warm the 8h SuperTrend
 TREND_REFRESH_SEC = 900          # re-pull candles / recompute SuperTrend every 15 min
+POSITION_CHECK_SEC = 30          # reconcile tracked position vs. the exchange this often
 
 
 def _now() -> pd.Timestamp:
@@ -87,6 +88,7 @@ class LiveRunner:
         # DB path is a fixed constant (STATE_DB in config.py), not an env var.
         self.store = Store()
         self.pos: dict | None = self.store.load_open()
+        self._pos_check_ts = 0.0                  # last exchange reconcile time
 
     # --- market data: SuperTrend (REST) ------------------------------------
     def refresh_trend(self) -> None:
@@ -241,6 +243,47 @@ class LiveRunner:
             f"stop {stop:,.1f} (id {sl_id}), SOLD {opt['symbol']} "
             f"(settles {self.pos['opt_settle']:%H:%M UTC})")
 
+    def _maybe_reconcile_position(self) -> None:
+        """If the tracked position vanished from the exchange (manual close during
+        testing, or the stop-loss firing), reset to flat so the next loop re-enters
+        on the current SuperTrend signal. Only meaningful for placed trades with a
+        real future id; dry-run / not-yet-placed positions are skipped.
+        """
+        if not self.place or self.pos is None:
+            return
+        fut_id = self.pos.get("fut_id")
+        if not fut_id:
+            return
+        if time.time() - self._pos_check_ts < POSITION_CHECK_SEC:
+            return
+        self._pos_check_ts = time.time()
+        try:
+            size = self.broker.position_size(fut_id)
+        except Exception as e:                    # keep running on a transient REST error
+            _log(f"position reconcile failed: {e}")
+            return
+        if size != 0:
+            return                                # still open on the exchange — nothing to do
+        # future leg is gone: cancel any resting stop, mark closed, go flat.
+        if self.pos.get("sl_id"):
+            try:
+                self.broker.cancel_order(fut_id, self.pos["sl_id"])
+            except Exception:
+                pass
+        bias = self.pos["bias"]
+        self.store.close_open(self.pos, "closed_externally")
+        self.store.log("EXTERNAL_CLOSE", bias=bias, side=self.pos["side"],
+                       symbol=self.symbol, detail="future flat on exchange")
+        self._alert(
+            "⚪", "Position Closed Externally",
+            [f"<b>{bias}</b> future no longer on the exchange",
+             "🧹 Cancelled resting stop, marked closed",
+             "⚠️ If a short option is still open, close it manually",
+             "⚪ Now flat — will re-enter on the next SuperTrend signal"],
+            f"EXTERNAL CLOSE {bias} — future flat on exchange (manual close / stop "
+            "fired): cancelled stop, marked closed. Now flat, re-entering on signal.")
+        self.pos = None
+
     def handle_expiry(self) -> None:
         spot = self.current_spot()
         p = self.pos
@@ -340,6 +383,7 @@ class LiveRunner:
             while not self._stop.is_set():
                 self._maybe_refresh_trend()
                 try:
+                    self._maybe_reconcile_position()   # detect manual/stop close first
                     if self.pos is None:
                         self.open_position()
                     elif _now() >= self.pos["opt_settle"]:

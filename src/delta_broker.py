@@ -14,6 +14,7 @@ import json
 import os
 import time
 from pathlib import Path
+from urllib.parse import urlencode
 
 import requests
 import pandas as pd
@@ -48,14 +49,18 @@ class DeltaBroker:
             "User-Agent": "options-algo-startup",
         }
 
-    def _send(self, method: str, path: str, payload: str) -> requests.Response:
-        headers = self._sign(method, path, "", payload)
-        return self.session.request(method, self.base + path,
-                                    headers=headers, data=payload, timeout=30)
+    def _send(self, method: str, path: str, query: str, payload: str) -> requests.Response:
+        headers = self._sign(method, path, query, payload)
+        return self.session.request(method, self.base + path + query,
+                                    headers=headers, data=payload or None, timeout=30)
 
-    def _signed(self, method: str, path: str, body: dict | None = None) -> dict:
+    def _signed(self, method: str, path: str, body: dict | None = None,
+                params: dict | None = None) -> dict:
+        # Delta signs method + ts + path + query + body, so the query string must be
+        # both signed (here) and sent on the URL (in _send). Sort for a stable string.
+        query = "?" + urlencode(sorted(params.items())) if params else ""
         payload = json.dumps(body, separators=(",", ":")) if body else ""
-        r = self._send(method, path, payload)
+        r = self._send(method, path, query, payload)
 
         # The CDN clock (and the local clock) can drift enough that Delta rejects
         # the signature as expired. The error tells us the true server_time — sync
@@ -68,7 +73,7 @@ class DeltaBroker:
             except (KeyError, ValueError):
                 pass
             else:
-                r = self._send(method, path, payload)
+                r = self._send(method, path, query, payload)
 
         if not r.ok:
             # surface Delta's error payload instead of a bare "400 Client Error"
@@ -151,3 +156,20 @@ class DeltaBroker:
         """Cancel a resting order (e.g. the SuperTrend stop when we close early)."""
         body = {"id": int(order_id), "product_id": int(product_id)}
         return self._signed("DELETE", "/v2/orders", body)
+
+    # --- account state -----------------------------------------------------
+    def position_size(self, product_id: int) -> int:
+        """Signed net position size for one product (0 = flat, +long / -short).
+
+        Used to reconcile the runner's tracked trade against the exchange: if a
+        leg we think we hold reads 0 here, it was closed outside the runner (a
+        manual close during testing, or the stop-loss firing) and we should reset
+        to flat and re-enter on the current SuperTrend signal.
+        """
+        res = self._signed("GET", "/v2/positions", params={"product_id": int(product_id)})
+        r = res.get("result")
+        if isinstance(r, list):                  # some deployments return a list
+            r = r[0] if r else {}
+        if not r:
+            return 0
+        return int(float(r.get("size") or 0))
