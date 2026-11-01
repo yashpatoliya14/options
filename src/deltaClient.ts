@@ -216,6 +216,7 @@ export class DeltaClient {
   }
 
   public async getWalletBalance(): Promise<WalletBalanceInfo> {
+    if (!this.apiKey || !this.apiSecret || this.apiKey === "your_delta_api_key_here") {
       return {
         exchange: "Delta Exchange",
         balanceUsd: 0,
