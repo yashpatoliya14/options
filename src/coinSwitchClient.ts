@@ -218,6 +218,7 @@ export class CoinSwitchClient {
   }
 
   public async getWalletBalance(): Promise<WalletBalanceInfo> {
+    if (!this.apiKey || !this.secretKey || this.apiKey === "your_coinswitch_api_key_here") {
       return {
         exchange: "CoinSwitch",
         balanceUsd: 0,
