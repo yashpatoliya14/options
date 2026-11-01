@@ -26,7 +26,12 @@ export const Config = {
   COINSWITCH_BASE_URL: process.env.COINSWITCH_BASE_URL || "https://coinswitch.co",
   COINSWITCH_PRO_URL: process.env.COINSWITCH_PRO_URL || "https://api-trading.coinswitch.co",
 
-  // Trading & Asset Parameters
+  // Global Lot Size (1 single variable for both exchanges)
+  // 1 Delta BTC option contract = 0.001 BTC
+  // CoinSwitch lot = BTC units
+  TRADE_LOT_BTC: parseFloat(process.env.TRADE_LOT_BTC || "0.05"),
+
+  // Underlying Asset & Pricing
   UNDERLYING_ASSET: (process.env.UNDERLYING_ASSET || "BTC").toUpperCase(),
   get UNDERLYING_SYMBOL(): string {
     return `${this.UNDERLYING_ASSET}USD`;
@@ -43,12 +48,8 @@ export const Config = {
   FUND_IMBALANCE_THRESHOLD_PCT: parseFloat(process.env.FUND_IMBALANCE_THRESHOLD_PCT || "25.0"),
   BALANCE_CHECK_INTERVAL_MINUTES: parseInt(process.env.BALANCE_CHECK_INTERVAL_MINUTES || "30", 10),
 
-  SIMULATED_DELTA_BALANCE_USD: parseFloat(process.env.SIMULATED_DELTA_BALANCE_USD || "1000.0"),
-  SIMULATED_COINSWITCH_BALANCE_USD: parseFloat(process.env.SIMULATED_COINSWITCH_BALANCE_USD || "1000.0"),
-
   // Telegram Notifications
   TELEGRAM_ENABLED: (process.env.TELEGRAM_ENABLED || "true").toLowerCase() === "true",
   TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || "",
   TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID || ""
 };
-

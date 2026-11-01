@@ -41,6 +41,13 @@ export interface ArbitrageRow {
   targetDateStr: string;
   deltaExpiry: string;
   coinswitchExpiry: string;
+  // Lot & Margin calculations
+  tradeLotBtc: number;
+  deltaContracts: number;
+  requiredMarginUsd: number;
+  requiredMarginInr: number;
+  potentialProfitUsd: number;
+  potentialProfitInr: number;
 }
 
 export interface ScanResult {
@@ -54,13 +61,15 @@ export interface ScanResult {
   otmPuts: ArbitrageRow[];
   allRows: ArbitrageRow[];
   arbitrageOpportunities: ArbitrageRow[];
+  tradeLotBtc: number;
 }
 
 export interface WalletBalanceInfo {
   exchange: "Delta Exchange" | "CoinSwitch";
-  isSimulated: boolean;
   balanceUsd: number;
   balanceInr: number;
+  availableUsd: number;
+  availableInr: number;
   details?: any;
   error?: string;
 }
@@ -69,21 +78,27 @@ export interface BalanceResult {
   deltaUsd: number;
   deltaInr: number;
   deltaPct: number;
-  deltaIsSimulated: boolean;
+  deltaError?: string;
   coinswitchUsd: number;
   coinswitchInr: number;
   coinswitchPct: number;
-  coinswitchIsSimulated: boolean;
+  coinswitchError?: string;
   totalUsd: number;
   totalInr: number;
   diffUsd: number;
   diffInr: number;
   imbalancePct: number;
   isImbalanced: boolean;
+  hasZeroBalance: boolean;
+  zeroBalanceExchanges: string[];
   thresholdPct: number;
   transferUsd: number;
   transferInr: number;
   fromExchange: string;
   toExchange: string;
+  // Margin check for TRADE_LOT_BTC
+  tradeLotBtc: number;
+  deltaContracts: number;
+  estimatedMarginPerExchangeUsd: number;
+  canExecuteTrade: boolean;
 }
-

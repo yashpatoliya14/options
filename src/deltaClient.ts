@@ -1,7 +1,6 @@
 /**
  * Delta Exchange API Client (TypeScript / Node.js).
- * Handles option chains (5:30 PM IST / 12:00 UTC settlement), spot price,
- * and authenticated HMAC-SHA256 wallet balances.
+ * Live options & live wallet balance only.
  */
 
 import crypto from "crypto";
@@ -101,7 +100,6 @@ export class DeltaClient {
       const settleDtUtc = new Date(settleStr);
       if (isNaN(settleDtUtc.getTime()) || settleDtUtc < oneHourAgo) continue;
 
-      // IST Date (UTC + 5:30)
       const settleDtIst = new Date(settleDtUtc.getTime() + 5.5 * 3600 * 1000);
       const istDateStr = settleDtIst.toISOString().split("T")[0];
 
@@ -141,18 +139,89 @@ export class DeltaClient {
     return parsed;
   }
 
-  public async getWalletBalance(): Promise<WalletBalanceInfo> {
-    if (
-      !this.apiKey ||
-      !this.apiSecret ||
-      this.apiKey === "your_delta_api_key_here"
-    ) {
+  /**
+   * Fetch LIVE wallet balance from Delta Exchange.
+   * If credentials are not set or balance is 0, returns live 0.
+   */
+  /**
+   * Fetch open option positions on Delta Exchange.
+   */
+  public async getOpenPositions(): Promise<any[]> {
+    if (!this.apiKey || !this.apiSecret || this.apiKey === "your_delta_api_key_here") {
+      return [];
+    }
+    const path = "/v2/positions/margined";
+    try {
+      const headers = this.signRequest("GET", path);
+      const resp = await this.http.get(path, { headers });
+      const results: any[] = resp.data?.result || [];
+      return results.filter((p) => Math.abs(parseFloat(p.size || "0")) > 0);
+    } catch (err: any) {
+      console.warn(`Error fetching Delta positions: ${err.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Close an open position on Delta Exchange by sending an opposing market order.
+   */
+  public async closePosition(productSymbol: string, size: number): Promise<{ success: boolean; message: string }> {
+    if (!this.apiKey || !this.apiSecret) {
+      return { success: false, message: "Delta credentials missing" };
+    }
+    const path = "/v2/orders";
+    // If short (size < 0), buy back. If long (size > 0), sell.
+    const side = size < 0 ? "buy" : "sell";
+    const absContracts = Math.abs(size);
+    const body = {
+      product_symbol: productSymbol,
+      size: absContracts,
+      side,
+      order_type: "market_order",
+      reduce_only: true
+    };
+    const bodyStr = JSON.stringify(body);
+    try {
+      const headers = this.signRequest("POST", path, "", bodyStr);
+      headers["Content-Type"] = "application/json";
+      const resp = await this.http.post(path, body, { headers });
+      if (resp.status === 200 || resp.status === 201) {
+        return { success: true, message: `Closed ${absContracts} contracts of ${productSymbol} (${side})` };
+      }
+      return { success: false, message: `Failed: ${JSON.stringify(resp.data)}` };
+    } catch (err: any) {
+      return { success: false, message: err.response?.data?.error?.message || err.message };
+    }
+  }
+
+  /**
+   * Close all active positions and cancel open orders on Delta Exchange.
+   */
+  public async closeAllPositions(): Promise<{ closedCount: number; details: string[] }> {
+    const positions = await this.getOpenPositions();
+    const details: string[] = [];
+    let closedCount = 0;
+
+    for (const p of positions) {
+      const sym = p.product_symbol || p.symbol;
+      const size = parseFloat(p.size || "0");
+      if (Math.abs(size) > 0) {
+        const res = await this.closePosition(sym, size);
+        details.push(`${sym}: ${res.message}`);
+        if (res.success) closedCount++;
+      }
+    }
+
+    return { closedCount, details };
+  }
+    if (!this.apiKey || !this.apiSecret || this.apiKey === "your_delta_api_key_here") {
       return {
         exchange: "Delta Exchange",
-        isSimulated: true,
-        balanceUsd: Config.SIMULATED_DELTA_BALANCE_USD,
-        balanceInr: Math.round(Config.SIMULATED_DELTA_BALANCE_USD * Config.USD_INR_RATE * 100) / 100,
-        details: "Simulated balance (Configure DELTA_API_KEY and DELTA_API_SECRET in .env for live balance)"
+        balanceUsd: 0,
+        balanceInr: 0,
+        availableUsd: 0,
+        availableInr: 0,
+        error: "Delta API credentials not set in .env"
       };
     }
 
@@ -163,40 +232,52 @@ export class DeltaClient {
       if (resp.status === 200) {
         const results: any[] = resp.data?.result || [];
         let totalUsd = 0;
+        let availableUsd = 0;
         let spotPrice = 0;
 
         for (const item of results) {
           const asset = item.asset_symbol;
           const balance = parseFloat(item.balance || "0");
+          const available = parseFloat(item.available_balance || item.balance || "0");
+
           if (["USDT", "USD", "USDC"].includes(asset)) {
             totalUsd += balance;
+            availableUsd += available;
           } else if (asset === "BTC") {
             if (spotPrice === 0) {
               spotPrice = await this.getSpotPrice();
             }
             totalUsd += balance * spotPrice;
+            availableUsd += available * spotPrice;
           }
         }
 
         return {
           exchange: "Delta Exchange",
-          isSimulated: false,
           balanceUsd: Math.round(totalUsd * 100) / 100,
           balanceInr: Math.round(totalUsd * Config.USD_INR_RATE * 100) / 100,
+          availableUsd: Math.round(availableUsd * 100) / 100,
+          availableInr: Math.round(availableUsd * Config.USD_INR_RATE * 100) / 100,
           details: results
         };
       }
     } catch (err: any) {
-      console.warn(`Delta balance API error: ${err.message}`);
+      return {
+        exchange: "Delta Exchange",
+        balanceUsd: 0,
+        balanceInr: 0,
+        availableUsd: 0,
+        availableInr: 0,
+        error: `Delta API error: ${err.response?.data?.error?.message || err.message}`
+      };
     }
 
     return {
       exchange: "Delta Exchange",
-      isSimulated: true,
-      balanceUsd: Config.SIMULATED_DELTA_BALANCE_USD,
-      balanceInr: Math.round(Config.SIMULATED_DELTA_BALANCE_USD * Config.USD_INR_RATE * 100) / 100,
-      details: "Using simulated balance fallback"
+      balanceUsd: 0,
+      balanceInr: 0,
+      availableUsd: 0,
+      availableInr: 0
     };
   }
 }
-

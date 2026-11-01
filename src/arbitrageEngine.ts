@@ -1,7 +1,6 @@
 /**
  * Arbitrage Engine (TypeScript / Node.js).
- * Compares Delta Exchange (5:30 PM IST expiry) and CoinSwitch (1:30 PM IST expiry).
- * Detects ATM and OTM Calls/Puts where CoinSwitch Value >= Delta Value (IV Arbitrage).
+ * Auto-adjusts position sizing and margin based on global Config.TRADE_LOT_BTC.
  */
 
 import { Config } from "./config";
@@ -18,10 +17,6 @@ export class ArbitrageEngine {
     this.coinSwitchClient = coinSwitchClient || new CoinSwitchClient();
   }
 
-  /**
-   * Determine target expiry date in IST (UTC+5:30).
-   * CoinSwitch expires daily at 1:30 PM IST (13:30).
-   */
   public getTargetExpiryDate(): { targetDateStr: string; cycleDesc: string } {
     const nowUtc = new Date();
     const istNow = new Date(nowUtc.getTime() + 5.5 * 3600 * 1000);
@@ -32,7 +27,6 @@ export class ArbitrageEngine {
     let targetIst = new Date(istNow);
     let cycleDesc = "";
 
-    // If past 13:30 IST, tomorrow's expiry is active
     if (istHour > 13 || (istHour === 13 && istMin >= 30)) {
       targetIst = new Date(targetIst.getTime() + 24 * 3600 * 1000);
       cycleDesc = `Next Day Expiry (${targetIst.toISOString().split("T")[0]})`;
@@ -44,9 +38,6 @@ export class ArbitrageEngine {
     return { targetDateStr, cycleDesc };
   }
 
-  /**
-   * Scan options across both exchanges and identify mispricings.
-   */
   public async scanOptions(targetDate?: string): Promise<ScanResult> {
     const spotPrice = await this.deltaClient.getSpotPrice();
     let { targetDateStr, cycleDesc } = this.getTargetExpiryDate();
@@ -59,7 +50,6 @@ export class ArbitrageEngine {
     let deltaOpts = await this.deltaClient.getParsedOptions(targetDateStr);
     let csOpts = await this.coinSwitchClient.getParsedOptions(spotPrice, targetDateStr);
 
-    // Fallback if no matching options on targetDate (find earliest common date)
     if (deltaOpts.length === 0 || csOpts.length === 0) {
       const [deltaAll, csAll] = await Promise.all([
         this.deltaClient.getParsedOptions(),
@@ -78,7 +68,6 @@ export class ArbitrageEngine {
       }
     }
 
-    // Index by (strike, optionType)
     const deltaMap = new Map<string, any>();
     for (const o of deltaOpts) {
       deltaMap.set(`${o.strike}_${o.optionType}`, o);
@@ -89,7 +78,7 @@ export class ArbitrageEngine {
       csMap.set(`${o.strike}_${o.optionType}`, o);
     }
 
-    // Extract strikes present in BOTH exchanges first (for clean side-by-side comparison)
+    // Common strikes across both exchanges
     const deltaStrikes = new Set(deltaOpts.map((o) => o.strike));
     const csStrikes = new Set(csOpts.map((o) => o.strike));
     const commonStrikes = Array.from(deltaStrikes).filter((s) => csStrikes.has(s)).sort((a, b) => a - b);
@@ -102,7 +91,7 @@ export class ArbitrageEngine {
       ? commonStrikes 
       : Array.from(strikeSet).sort((a, b) => a - b);
 
-    // ATM strike: minimal distance to spot
+    // ATM strike
     let atmStrike = 0;
     let minDiff = Infinity;
     for (const s of allStrikes) {
@@ -113,16 +102,20 @@ export class ArbitrageEngine {
       }
     }
 
-    // OTM Calls: strikes strictly above ATM
     const otmCallStrikes = allStrikes
       .filter((s) => s > atmStrike)
       .slice(0, Config.NUM_OTM_STRIKES);
 
-    // OTM Puts: strikes strictly below ATM
     const otmPutStrikes = allStrikes
       .filter((s) => s < atmStrike)
       .sort((a, b) => b - a)
       .slice(0, Config.NUM_OTM_STRIKES);
+
+    // Sizing formulas:
+    // Global TRADE_LOT_BTC (e.g. 0.05 BTC)
+    // 1 Delta BTC option contract = 0.001 BTC => contracts = TRADE_LOT_BTC / 0.001
+    const tradeLotBtc = Config.TRADE_LOT_BTC;
+    const deltaContracts = Math.round(tradeLotBtc / 0.001);
 
     const buildRow = (strike: number, optType: OptionType, category: "ATM" | "OTM Call" | "OTM Put"): ArbitrageRow | null => {
       const key = `${strike}_${optType}`;
@@ -141,8 +134,17 @@ export class ArbitrageEngine {
       const diffPct = dMark > 0 ? Math.round(((diff / dMark) * 100) * 10) / 10 : 0;
       const ivDiff = Math.round((cIv - dIv) * 10) / 10;
 
-      // Arbitrage condition: CoinSwitch value >= Delta Exchange option value
       const isArbitrage = cMark >= dMark && cMark > 0 && dMark > 0;
+
+      // Equal Margin calculations across both exchanges
+      // Standard short option initial margin is approx 10% to 15% of spot notional
+      const notionalUsd = tradeLotBtc * spotPrice;
+      const requiredMarginUsd = Math.round(notionalUsd * 0.12 * 100) / 100; // ~12% margin
+      const requiredMarginInr = Math.round(requiredMarginUsd * Config.USD_INR_RATE * 100) / 100;
+
+      // Potential net arbitrage profit for the configured lot size
+      const potentialProfitUsd = Math.round(diff * tradeLotBtc * 100) / 100;
+      const potentialProfitInr = Math.round(potentialProfitUsd * Config.USD_INR_RATE * 100) / 100;
 
       return {
         strike,
@@ -164,7 +166,13 @@ export class ArbitrageEngine {
         isArbitrage,
         targetDateStr,
         deltaExpiry: "5:30 PM IST",
-        coinswitchExpiry: "1:30 PM IST"
+        coinswitchExpiry: "1:30 PM IST",
+        tradeLotBtc,
+        deltaContracts,
+        requiredMarginUsd,
+        requiredMarginInr,
+        potentialProfitUsd,
+        potentialProfitInr
       };
     };
 
@@ -198,44 +206,43 @@ export class ArbitrageEngine {
       otmCalls,
       otmPuts,
       allRows,
-      arbitrageOpportunities
+      arbitrageOpportunities,
+      tradeLotBtc
     };
   }
 
-  /**
-   * Format scan results into clean, beautiful Markdown for Telegram.
-   */
   public formatTelegramReport(res: ScanResult): string {
     const spot = res.spotPrice;
+    const lotBtc = res.tradeLotBtc;
+    const deltaContracts = Math.round(lotBtc / 0.001);
     const lines: string[] = [];
 
-    lines.push("⚡ *OPTIONS ARBITRAGE SCANNER (Node.js)* ⚡");
+    lines.push("⚡ *OPTIONS ARBITRAGE SCANNER (LIVE)* ⚡");
     lines.push("━━━━━━━━━━━━━━━━━━━━━━");
     lines.push(`🪙 *Underlying:* ${Config.UNDERLYING_ASSET} Spot: *$${spot.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}* (₹${Math.round(spot * Config.USD_INR_RATE).toLocaleString("en-IN")})`);
+    lines.push(`📦 *Global Sizing:* *${lotBtc} BTC* (Delta: *${deltaContracts} contracts* | CoinSwitch: *${lotBtc} BTC*)`);
     lines.push(`📅 *Cycle:* ${res.cycleDesc}`);
     lines.push("⏰ *CoinSwitch Expiry:* 1:30 PM IST (08:00 UTC)");
     lines.push("⏰ *Delta Expiry:* 5:30 PM IST (12:00 UTC)");
-    lines.push("💡 *Strategy:* IV Arbitrage (CoinSwitch ≥ Delta)");
     lines.push("━━━━━━━━━━━━━━━━━━━━━━\n");
 
-    // 1. Arbitrage Signals
     if (res.arbitrageOpportunities.length > 0) {
-      lines.push("🔥 *ARBITRAGE SIGNALS (CoinSwitch ≥ Delta)* 🔥");
-      lines.push("_Delta has 4 extra hours of time, yet CoinSwitch is priced higher!_\n");
+      lines.push("🔥 *LIVE ARBITRAGE SIGNALS (CoinSwitch ≥ Delta)* 🔥");
+      lines.push("_CoinSwitch is overpriced despite expiring 4 hours earlier!_\n");
       for (const a of res.arbitrageOpportunities) {
         lines.push(
           `🟢 *${a.strike.toLocaleString()} ${a.optionType}* (${a.category})\n` +
-          `   ├ CoinSwitch (1:30 PM): *$${a.coinswitchPrice.toFixed(2)}* | IV: ${a.coinswitchIv}%\n` +
-          `   ├ Delta (5:30 PM): *$${a.deltaPrice.toFixed(2)}* | IV: ${a.deltaIv}%\n` +
-          `   └ 💰 *Spread:* +$${a.diff.toFixed(2)} (*+${a.diffPct}%*) | IV Edge: +${a.ivDiff}%\n` +
-          `   👉 *Action:* SELL CoinSwitch / BUY Delta (Collect Net Credit)\n`
+          `   ├ CoinSwitch (1:30 PM): *$${a.coinswitchPrice.toFixed(2)}* (₹${a.coinswitchPriceInr.toLocaleString("en-IN")}) | IV: ${a.coinswitchIv}%\n` +
+          `   ├ Delta (5:30 PM): *$${a.deltaPrice.toFixed(2)}* (₹${a.deltaPriceInr.toLocaleString("en-IN")}) | IV: ${a.deltaIv}%\n` +
+          `   ├ 💰 *Spread:* +$${a.diff.toFixed(2)} (*+${a.diffPct}%*) | IV Edge: +${a.ivDiff}%\n` +
+          `   ├ 📊 *Lot (${lotBtc} BTC):* Profit: *+$${a.potentialProfitUsd.toFixed(2)}* (₹${a.potentialProfitInr.toLocaleString("en-IN")}) | Margin: ~$${a.requiredMarginUsd.toFixed(0)}/ex\n` +
+          `   └ 👉 *Trade:* SELL ${lotBtc} BTC CoinSwitch / BUY ${deltaContracts} contracts Delta\n`
         );
       }
     } else {
-      lines.push("ℹ️ *No strict CoinSwitch ≥ Delta condition right now.* Showing closest spreads below:\n");
+      lines.push("ℹ️ *No strict CoinSwitch ≥ Delta condition right now.* Closest spreads below:\n");
     }
 
-    // 2. ATM Options
     lines.push(`📊 *ATM OPTIONS (Strike ${res.atmStrike.toLocaleString()})*`);
     lines.push("----------------------------------------");
     if (res.atmCall) {
@@ -258,7 +265,6 @@ export class ArbitrageEngine {
     }
     lines.push("");
 
-    // 3. OTM Calls
     if (res.otmCalls.length > 0) {
       lines.push("📈 *OTM CALLS (Strikes > Spot)*");
       lines.push("----------------------------------------");
@@ -272,7 +278,6 @@ export class ArbitrageEngine {
       lines.push("");
     }
 
-    // 4. OTM Puts
     if (res.otmPuts.length > 0) {
       lines.push("📉 *OTM PUTS (Strikes < Spot)*");
       lines.push("----------------------------------------");
@@ -286,10 +291,9 @@ export class ArbitrageEngine {
       lines.push("");
     }
 
-    // 5. Daily 1:30 PM Routine
-    lines.push("⏰ *1:30 PM IST DAILY ROUTINE:*");
-    lines.push("1. Close yesterday's 1:30 PM trade on CoinSwitch (expired/settled).");
-    lines.push("2. Re-enter next day expiry for highest mispriced strike.");
+    lines.push("⏰ *1:30 PM IST DAILY PROCEDURE:*");
+    lines.push("1. Verify yesterday's 1:30 PM CoinSwitch trade settlement.");
+    lines.push(`2. Re-enter ${lotBtc} BTC next day trade on mispriced strike.`);
     lines.push("3. Type `/balance` to verify equal margin across exchanges.");
 
     return lines.join("\n");
