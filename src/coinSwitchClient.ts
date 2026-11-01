@@ -141,7 +141,81 @@ export class CoinSwitchClient {
    * Fetch LIVE wallet balance from CoinSwitch PRO.
    * If credentials are not set or balance is 0, returns live 0.
    */
-  public async getWalletBalance(): Promise<WalletBalanceInfo> {
+  /**
+   * Fetch open option positions on CoinSwitch PRO.
+   */
+  public async getOpenPositions(): Promise<any[]> {
+    if (!this.apiKey || !this.secretKey || this.apiKey === "your_coinswitch_api_key_here") {
+      return [];
+    }
+    const endpoints = [
+      "/trade/api/v2/positions",
+      "/trade/api/v2/options/positions"
+    ];
+    for (const path of endpoints) {
+      try {
+        const headers = this.signRequest("GET", path);
+        const resp = await this.http.get(path, { headers });
+        if (resp.status === 200) {
+          const list: any[] = resp.data?.data || resp.data?.result || [];
+          return list.filter((p) => Math.abs(parseFloat(p.size || p.quantity || "0")) > 0);
+        }
+      } catch (err: any) {
+        // try next
+      }
+    }
+    return [];
+  }
+
+  /**
+   * Close a position on CoinSwitch by sending an opposing market order.
+   */
+  public async closePosition(symbol: string, quantity: number, currentSide: string): Promise<{ success: boolean; message: string }> {
+    if (!this.apiKey || !this.secretKey) {
+      return { success: false, message: "CoinSwitch credentials missing" };
+    }
+    const path = "/trade/api/v2/order";
+    const side = currentSide.toLowerCase().includes("sell") || currentSide.toLowerCase().includes("short") ? "buy" : "sell";
+    const body = {
+      pair: symbol,
+      side,
+      type: "market",
+      quantity: Math.abs(quantity).toString(),
+      category: "option"
+    };
+    try {
+      const headers = this.signRequest("POST", path, body);
+      const resp = await this.http.post(path, body, { headers });
+      if (resp.status === 200 || resp.status === 201) {
+        return { success: true, message: `Closed ${quantity} of ${symbol} (${side})` };
+      }
+      return { success: false, message: `Failed: ${JSON.stringify(resp.data)}` };
+    } catch (err: any) {
+      return { success: false, message: err.response?.data?.message || err.message };
+    }
+  }
+
+  /**
+   * Close all active positions on CoinSwitch.
+   */
+  public async closeAllPositions(): Promise<{ closedCount: number; details: string[] }> {
+    const positions = await this.getOpenPositions();
+    const details: string[] = [];
+    let closedCount = 0;
+
+    for (const p of positions) {
+      const sym = p.symbol || p.pair;
+      const qty = parseFloat(p.size || p.quantity || "0");
+      const side = p.side || "sell";
+      if (Math.abs(qty) > 0) {
+        const res = await this.closePosition(sym, qty, side);
+        details.push(`${sym}: ${res.message}`);
+        if (res.success) closedCount++;
+      }
+    }
+
+    return { closedCount, details };
+  }
     if (!this.apiKey || !this.secretKey || this.apiKey === "your_coinswitch_api_key_here") {
       return {
         exchange: "CoinSwitch",

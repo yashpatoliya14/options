@@ -101,7 +101,98 @@ export class TelegramBot {
       return;
     }
 
-    // 3. 'arb' command (Arbitrage signals only)
+    // 3. 'close' command (Immediately close both legs)
+    if (raw === "close" || raw === "/close") {
+      await this.sendMessage("🚨 *CLOSING BOTH LEGS ON DELTA & COINSWITCH...*", userChatId);
+      try {
+        const [deltaClose, csClose] = await Promise.all([
+          this.arbitrageEngine.deltaClient.closeAllPositions(),
+          this.arbitrageEngine.coinSwitchClient.closeAllPositions()
+        ]);
+
+        const lines = [
+          "🛑 *POSITIONS CLOSURE REPORT* 🛑",
+          "━━━━━━━━━━━━━━━━━━━━━━",
+          `🏛 *Delta Exchange:* Closed ${deltaClose.closedCount} position(s)`
+        ];
+        if (deltaClose.details.length > 0) {
+          lines.push(...deltaClose.details.map((d) => `   • ${d}`));
+        } else {
+          lines.push("   • No active positions found on Delta.");
+        }
+
+        lines.push(`\n🏦 *CoinSwitch PRO:* Closed ${csClose.closedCount} position(s)`);
+        if (csClose.details.length > 0) {
+          lines.push(...csClose.details.map((d) => `   • ${d}`));
+        } else {
+          lines.push("   • No active positions found on CoinSwitch.");
+        }
+
+        lines.push("\n✅ *Both legs closure executed! Send 'current' to verify flat state.*");
+        await this.sendMessage(lines.join("\n"), userChatId);
+      } catch (err: any) {
+        await this.sendMessage(`❌ Error closing positions: ${err.message}`, userChatId);
+      }
+      return;
+    }
+
+    // 4. 'current' command (Check current state & open positions on both exchanges)
+    if (raw === "current" || raw === "/current") {
+      await this.sendMessage("📊 *Fetching current state on Delta & CoinSwitch...*", userChatId);
+      try {
+        const [deltaPos, csPos, spotPrice] = await Promise.all([
+          this.arbitrageEngine.deltaClient.getOpenPositions(),
+          this.arbitrageEngine.coinSwitchClient.getOpenPositions(),
+          this.arbitrageEngine.deltaClient.getSpotPrice()
+        ]);
+
+        const lines = [
+          "📊 *CURRENT ARBITRAGE POSITIONS STATE* 📊",
+          "━━━━━━━━━━━━━━━━━━━━━━",
+          `🪙 *BTC Spot:* *$${spotPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}* (₹${Math.round(spotPrice * Config.USD_INR_RATE).toLocaleString("en-IN")})`,
+          `📦 *Lot Config:* *${Config.TRADE_LOT_BTC} BTC* (${Math.round(Config.TRADE_LOT_BTC / 0.001)} Delta contracts)\n`
+        ];
+
+        // Delta state
+        lines.push("🏛 *Delta Exchange Positions:*");
+        if (deltaPos.length === 0) {
+          lines.push("   • _No open positions (FLAT)_");
+        } else {
+          for (const p of deltaPos) {
+            const sym = p.product_symbol || p.symbol;
+            const size = p.size;
+            const entry = p.entry_price || "0";
+            const pnl = p.unrealized_pnl || "0";
+            lines.push(`   • *${sym}*: Size: \`${size}\` | Entry: \`$${entry}\` | PnL: \`${pnl} USD\``);
+          }
+        }
+
+        // CoinSwitch state
+        lines.push("\n🏦 *CoinSwitch PRO Positions:*");
+        if (csPos.length === 0) {
+          lines.push("   • _No open positions (FLAT)_");
+        } else {
+          for (const p of csPos) {
+            const sym = p.symbol || p.pair;
+            const qty = p.size || p.quantity;
+            const side = p.side || "N/A";
+            const pnl = p.unrealized_pnl || "0";
+            lines.push(`   • *${sym}*: ${side.toUpperCase()} \`${qty} BTC\` | PnL: \`${pnl}\``);
+          }
+        }
+
+        const isFlat = deltaPos.length === 0 && csPos.length === 0;
+        lines.push(
+          `\n📈 *Status:* ${isFlat ? "🟢 *FLAT (Ready for next trade)*" : "🟡 *ACTIVE ARBITRAGE POSITION IN PROGRESS*"}`
+        );
+        lines.push(`👉 _Send *close* to instantly exit all legs._`);
+
+        await this.sendMessage(lines.join("\n"), userChatId);
+      } catch (err: any) {
+        await this.sendMessage(`❌ Error fetching current state: ${err.message}`, userChatId);
+      }
+      return;
+    }
     if (raw.includes("arb")) {
       try {
         const scanRes = await this.arbitrageEngine.scanOptions();
@@ -189,18 +280,18 @@ export class TelegramBot {
       return;
     }
 
-    // 6. 'help' / default
+    // 8. 'help' / default
     const helpLines = [
-      "🤖 *OPTIONS IV ARBITRAGE BOT COMMANDS (Node.js)*",
+      "🤖 *OPTIONS IV ARBITRAGE BOT COMMANDS*",
       "━━━━━━━━━━━━━━━━━━━━━━",
-      "• *options* — Scan Delta & CoinSwitch ATM & OTM options and show arbitrage opportunities where CoinSwitch ≥ Delta.",
-      "• *arb* — Show ONLY active arbitrage signals.",
-      "• *balance* — Check wallet balances on Delta & CoinSwitch, with transfer alerts if imbalanced.",
+      "• *options* — Live Delta vs CoinSwitch ATM & OTM scanner with arbitrage signals.",
+      "• *current* — Live open positions, unrealized PnL, and status across both exchanges.",
+      "• *close* — 🚨 INSTANTLY close both legs on Delta & CoinSwitch via market orders.",
+      "• *balance* — Check wallet balances & margin verification.",
       "• *trade* — 1:30 PM IST rollover execution instructions.",
-      "• *status* — Check live spot price and bot status.",
+      "• *status* — Live spot price and bot status.",
       "• *help* — Show this instructions menu.\n",
-      "💡 *STRATEGY SUMMARY:*",
-      "_Delta options expire at 5:30 PM IST (more time to expiry). CoinSwitch options expire at 1:30 PM IST (less time to expiry). When CoinSwitch ≥ Delta, CoinSwitch IV is inflated—creating an arbitrage harvest!_"
+      "💡 *LOT SIZING:* Sized globally by `TRADE_LOT_BTC` in `.env`."
     ];
     await this.sendMessage(helpLines.join("\n"), userChatId);
   }
