@@ -1,0 +1,35 @@
+{
+  "name": "options-iv-arbitrage",
+  "version": "1.0.0",
+  "description": "Crypto Options IV Arbitrage Algorithm (Delta Exchange vs CoinSwitch PRO) with Telegram Bot",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "prod": "node dist/index.js",
+    "scan": "tsx src/index.ts --options",
+    "balance": "tsx src/index.ts --balance",
+    "test-telegram": "tsx src/index.ts --test-telegram"
+  },
+  "keywords": [
+    "crypto",
+    "options",
+    "delta-exchange",
+    "coinswitch",
+    "arbitrage",
+    "telegram-bot"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
+

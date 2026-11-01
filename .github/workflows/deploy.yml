@@ -1,12 +1,40 @@
-name: Deploy to VM
+name: CI/CD Pipeline
 
 on:
   push:
     branches:
       - master
+  pull_request:
+    branches:
+      - master
 
 jobs:
+  # 1. Typecheck and Compile TypeScript
+  build:
+    name: Build & Typecheck (Node.js)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Compile TypeScript
+        run: npm run build
+
+  # 2. Deploy to Production VM via SSH (Only on master branch push)
   deploy:
+    name: Deploy to VM
+    needs: build
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
     runs-on: ubuntu-latest
 
     steps:
