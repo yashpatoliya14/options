@@ -105,7 +105,20 @@ npm start
 # Or compile to JavaScript and run in production
 npm run build
 npm run prod
+
+# Production on Linux VM (PM2 daemon)
+pm2 start ecosystem.config.js
 ```
+
+---
+
+## 🔄 CI/CD & GitHub Actions Workflow
+
+The repository includes an automated GitHub Actions workflow in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml):
+1. **Build & Typecheck:** Automatically checks code, runs `npm ci`, and verifies TypeScript compiles without errors on push / PR.
+2. **Automated VM Deployment:** On push to `master`, connects via SSH to your VM and runs `~/deploy-options.sh` to update, build, and reload the PM2 process.
+
+A ready-to-use VM deployment script is provided at [`scripts/deploy.sh`](scripts/deploy.sh) along with [`ecosystem.config.js`](ecosystem.config.js).
 
 The algorithm will:
 1. Listen 24/7 on Telegram for user commands like `options` and `balance`.
