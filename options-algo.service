@@ -1,0 +1,29 @@
+[Unit]
+Description=Options IV Arbitrage Bot (Node.js / TS)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/options
+
+# Load environment variables
+EnvironmentFile=/root/options/.env
+Environment=NODE_ENV=production
+Environment=PATH=/root/.nvm/versions/node/v24.21.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Production Runner with exact NVM node binary
+ExecStart=/root/.nvm/versions/node/v24.21.0/bin/node /root/options/dist/index.js
+
+# Auto restart if crashed or connection dropped
+Restart=always
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
