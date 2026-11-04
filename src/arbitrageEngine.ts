@@ -90,9 +90,15 @@ export class ArbitrageEngine {
       const coindcxMap = new Map<string, ParsedOption>();
       for (const o of group.coindcx) coindcxMap.set(`${o.strike}_${o.optionType}`, o);
 
+      const deltaStrikes = new Set(group.delta.map((o) => o.strike));
+      const coindcxStrikes = new Set(group.coindcx.map((o) => o.strike));
+      const commonStrikes = Array.from(deltaStrikes).filter((s) => coindcxStrikes.has(s)).sort((a, b) => a - b);
+
       const allStrikeSet = new Set<number>();
       for (const o of [...group.delta, ...group.coindcx]) allStrikeSet.add(o.strike);
-      const allStrikes = Array.from(allStrikeSet).sort((a, b) => a - b);
+      const allStrikes = commonStrikes.length >= 2
+        ? commonStrikes
+        : Array.from(allStrikeSet).sort((a, b) => a - b);
 
       // Identify ATM Strike
       let atmStrike = 0;
