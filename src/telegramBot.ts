@@ -536,11 +536,17 @@ export class ArbTelegramBot {
         lines.push(`   • ⚠️ Status: ${report.delta.error}`);
       }
 
-      lines.push(`\n🏦 *CoinDCX (Live):*`);
+      const cdcxWalletLabel = report.coindcx.walletName || "Options Wallet";
+      lines.push(`\n🏦 *CoinDCX ${cdcxWalletLabel} (Live):*`);
       lines.push(
         `   • Total Balance: *$${report.coindcx.balanceUsd.toFixed(2)}* (₹${report.coindcx.balanceInr.toLocaleString("en-IN")})`
       );
-      lines.push(`   • Available Margin: *$${report.coindcx.availableUsd.toFixed(2)}*`);
+      lines.push(
+        `   • Available Options Margin: *$${report.coindcx.availableUsd.toFixed(2)}* (₹${report.coindcx.availableInr.toLocaleString("en-IN")})`
+      );
+      if (report.coindcx.lockedMarginInr !== undefined && report.coindcx.lockedMarginInr > 0) {
+        lines.push(`   • Locked Options Margin: *₹${report.coindcx.lockedMarginInr.toLocaleString("en-IN")}* ($${report.coindcx.lockedMarginUsd?.toFixed(2)})`);
+      }
 
       if (report.coindcx.currencies.length > 0) {
         for (const c of report.coindcx.currencies) {

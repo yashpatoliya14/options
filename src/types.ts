@@ -101,10 +101,13 @@ export interface NetPnlReport {
 
 export interface LiveWalletInfo {
   exchange: "Delta Exchange" | "CoinDCX";
+  walletName?: string;
   balanceUsd: number;
   balanceInr: number;
   availableUsd: number;
   availableInr: number;
+  lockedMarginInr?: number;
+  lockedMarginUsd?: number;
   currencies: {
     symbol: string;
     total: number;

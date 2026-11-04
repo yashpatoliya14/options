@@ -49,12 +49,14 @@ class CoinDCXClient {
         };
     }
     /**
-     * Fetch LIVE wallet balances directly from CoinDCX.
+     * Fetch LIVE Options Wallet balances directly from CoinDCX.
+     * CoinDCX Crypto Options are INR & USDT backed margin accounts.
      */
     async getWalletBalance() {
         if (!this.apiKey || !this.apiSecret) {
             return {
                 exchange: "CoinDCX",
+                walletName: "Options Wallet",
                 balanceUsd: 0,
                 balanceInr: 0,
                 availableUsd: 0,
@@ -63,6 +65,48 @@ class CoinDCXClient {
                 error: "CoinDCX API credentials not set in .env",
             };
         }
+        // 1. Try derivatives/options margin positions payload
+        const positionsPath = "/exchange/v1/derivatives/futures/positions";
+        const posBody = {
+            timestamp: Math.floor(Date.now() / 1000),
+            page: "1",
+            size: "10",
+            margin_currency_short_name: ["INR", "USDT"],
+        };
+        try {
+            const headers = this.sign(posBody);
+            const resp = await this.http.post(positionsPath, posBody, { headers });
+            const rawData = resp.data;
+            if (rawData && (rawData.total_wallet_balance !== undefined || rawData.available_balance_cross !== undefined)) {
+                const totalBal = parseFloat(rawData.total_wallet_balance || "0");
+                const availBal = parseFloat(rawData.available_balance_cross || rawData.available_balance_isolated || rawData.total_wallet_balance || "0");
+                const lockedBal = parseFloat(rawData.total_initial_margin || "0");
+                const isUsdt = (rawData.margin_currency || "").toUpperCase() === "USDT";
+                const totalInr = isUsdt ? totalBal * config_1.Config.USD_INR_RATE : totalBal;
+                const totalUsd = isUsdt ? totalBal : totalBal / config_1.Config.USD_INR_RATE;
+                const availInr = isUsdt ? availBal * config_1.Config.USD_INR_RATE : availBal;
+                const availUsd = isUsdt ? availBal : availBal / config_1.Config.USD_INR_RATE;
+                const lockedInr = isUsdt ? lockedBal * config_1.Config.USD_INR_RATE : lockedBal;
+                const lockedUsd = isUsdt ? lockedBal : lockedBal / config_1.Config.USD_INR_RATE;
+                return {
+                    exchange: "CoinDCX",
+                    walletName: "Options Wallet",
+                    balanceUsd: Math.round(totalUsd * 100) / 100,
+                    balanceInr: Math.round(totalInr * 100) / 100,
+                    availableUsd: Math.round(availUsd * 100) / 100,
+                    availableInr: Math.round(availInr * 100) / 100,
+                    lockedMarginInr: Math.round(lockedInr * 100) / 100,
+                    lockedMarginUsd: Math.round(lockedUsd * 100) / 100,
+                    currencies: [
+                        { symbol: isUsdt ? "USDT" : "INR", total: totalBal, available: availBal },
+                    ],
+                };
+            }
+        }
+        catch {
+            // Fallback to balances
+        }
+        // 2. Query /exchange/v1/users/balances and isolate INR & USDT for options trading margin
         const path = "/exchange/v1/users/balances";
         const body = { timestamp: Math.floor(Date.now() / 1000) };
         try {
@@ -71,46 +115,65 @@ class CoinDCXClient {
             if (resp.status === 200 && Array.isArray(resp.data)) {
                 let totalUsd = 0;
                 let availableUsd = 0;
+                let totalInr = 0;
+                let availableInr = 0;
+                let lockedInr = 0;
+                let lockedUsd = 0;
                 const currencies = [];
                 for (const item of resp.data) {
-                    const curr = item.currency || item.currency_short_name || "";
+                    const curr = (item.currency || item.currency_short_name || "").toUpperCase();
                     const bal = parseFloat(item.balance || "0");
                     const locked = parseFloat(item.locked_balance || "0");
                     const avail = Math.max(0, bal - locked);
                     if (bal === 0 && avail === 0)
                         continue;
                     currencies.push({ symbol: curr, total: bal, available: avail });
-                    if (["USDT", "USD"].includes(curr)) {
-                        totalUsd += bal;
-                        availableUsd += avail;
-                    }
-                    else if (curr === "INR") {
+                    if (curr === "INR") {
+                        // Primary INR margin for CoinDCX Options
+                        totalInr += bal;
+                        availableInr += avail;
+                        lockedInr += locked;
                         totalUsd += bal / config_1.Config.USD_INR_RATE;
                         availableUsd += avail / config_1.Config.USD_INR_RATE;
+                        lockedUsd += locked / config_1.Config.USD_INR_RATE;
+                    }
+                    else if (["USDT", "USD"].includes(curr)) {
+                        // USDT margin
+                        totalUsd += bal;
+                        availableUsd += avail;
+                        lockedUsd += locked;
+                        totalInr += bal * config_1.Config.USD_INR_RATE;
+                        availableInr += avail * config_1.Config.USD_INR_RATE;
+                        lockedInr += locked * config_1.Config.USD_INR_RATE;
                     }
                 }
                 return {
                     exchange: "CoinDCX",
+                    walletName: "Options Wallet",
                     balanceUsd: Math.round(totalUsd * 100) / 100,
-                    balanceInr: Math.round(totalUsd * config_1.Config.USD_INR_RATE * 100) / 100,
+                    balanceInr: Math.round(totalInr * 100) / 100,
                     availableUsd: Math.round(availableUsd * 100) / 100,
-                    availableInr: Math.round(availableUsd * config_1.Config.USD_INR_RATE * 100) / 100,
+                    availableInr: Math.round(availableInr * 100) / 100,
+                    lockedMarginInr: Math.round(lockedInr * 100) / 100,
+                    lockedMarginUsd: Math.round(lockedUsd * 100) / 100,
                     currencies,
                 };
             }
             return {
                 exchange: "CoinDCX",
+                walletName: "Options Wallet",
                 balanceUsd: 0,
                 balanceInr: 0,
                 availableUsd: 0,
                 availableInr: 0,
                 currencies: [],
-                error: `CoinDCX balance error: HTTP ${resp.status}`,
+                error: `CoinDCX Options wallet error: HTTP ${resp.status}`,
             };
         }
         catch (err) {
             return {
                 exchange: "CoinDCX",
+                walletName: "Options Wallet",
                 balanceUsd: 0,
                 balanceInr: 0,
                 availableUsd: 0,
