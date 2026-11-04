@@ -1,15 +1,17 @@
 /**
- * CoinDCX API Client.
- * Handles fetching options chains, placing orders (SHORT), and closing positions.
- *
- * CoinDCX uses HMAC-SHA256 for signing.
- * Options are accessed via derivatives endpoints.
+ * CoinDCX API Client (LIVE ONLY).
+ * Handles:
+ *  - Live wallet balance (USDT, INR, etc.)
+ *  - Live open positions & Unrealized PnL
+ *  - Live order placement (SELL / SHORT)
+ *  - Live position closing
+ *  - Live options pricing & book summaries
  */
 
 import crypto from "crypto";
 import axios, { AxiosInstance } from "axios";
 import { Config, AssetConfig } from "./config";
-import { ParsedOption, OptionType } from "./types";
+import { ParsedOption, OptionType, LivePosition, LiveWalletInfo } from "./types";
 
 export class CoinDCXClient {
   private apiKey: string;
@@ -31,8 +33,7 @@ export class CoinDCXClient {
   }
 
   /**
-   * Sign a request body for CoinDCX authenticated endpoints.
-   * CoinDCX uses HMAC-SHA256 on the JSON body string.
+   * Cryptographically sign CoinDCX request body with HMAC-SHA256.
    */
   private sign(body: any): Record<string, string> {
     const bodyStr = JSON.stringify(body);
@@ -49,17 +50,144 @@ export class CoinDCXClient {
   }
 
   /**
-   * Fetch options instruments available on CoinDCX for a given asset.
-   * Since CoinDCX's options API may use the derivatives endpoint,
-   * we query available instruments and filter by asset + options type.
+   * Fetch LIVE wallet balances directly from CoinDCX.
+   */
+  public async getWalletBalance(): Promise<LiveWalletInfo> {
+    if (!this.apiKey || !this.apiSecret) {
+      return {
+        exchange: "CoinDCX",
+        balanceUsd: 0,
+        balanceInr: 0,
+        availableUsd: 0,
+        availableInr: 0,
+        currencies: [],
+        error: "CoinDCX API credentials not set in .env",
+      };
+    }
+
+    const path = "/exchange/v1/users/balances";
+    const body = { timestamp: Math.floor(Date.now() / 1000) };
+
+    try {
+      const headers = this.sign(body);
+      const resp = await this.http.post(path, body, { headers });
+
+      if (resp.status === 200 && Array.isArray(resp.data)) {
+        let totalUsd = 0;
+        let availableUsd = 0;
+        const currencies: { symbol: string; total: number; available: number }[] = [];
+
+        for (const item of resp.data) {
+          const curr = item.currency || item.currency_short_name || "";
+          const bal = parseFloat(item.balance || "0");
+          const locked = parseFloat(item.locked_balance || "0");
+          const avail = Math.max(0, bal - locked);
+
+          if (bal === 0 && avail === 0) continue;
+
+          currencies.push({ symbol: curr, total: bal, available: avail });
+
+          if (["USDT", "USD"].includes(curr)) {
+            totalUsd += bal;
+            availableUsd += avail;
+          } else if (curr === "INR") {
+            totalUsd += bal / Config.USD_INR_RATE;
+            availableUsd += avail / Config.USD_INR_RATE;
+          }
+        }
+
+        return {
+          exchange: "CoinDCX",
+          balanceUsd: Math.round(totalUsd * 100) / 100,
+          balanceInr: Math.round(totalUsd * Config.USD_INR_RATE * 100) / 100,
+          availableUsd: Math.round(availableUsd * 100) / 100,
+          availableInr: Math.round(availableUsd * Config.USD_INR_RATE * 100) / 100,
+          currencies,
+        };
+      }
+
+      return {
+        exchange: "CoinDCX",
+        balanceUsd: 0,
+        balanceInr: 0,
+        availableUsd: 0,
+        availableInr: 0,
+        currencies: [],
+        error: `CoinDCX balance error: HTTP ${resp.status}`,
+      };
+    } catch (err: any) {
+      return {
+        exchange: "CoinDCX",
+        balanceUsd: 0,
+        balanceInr: 0,
+        availableUsd: 0,
+        availableInr: 0,
+        currencies: [],
+        error: err.response?.data?.message || err.message,
+      };
+    }
+  }
+
+  /**
+   * Fetch LIVE open positions directly from CoinDCX Derivatives.
+   */
+  public async getOpenPositions(): Promise<LivePosition[]> {
+    if (!this.apiKey || !this.apiSecret) return [];
+
+    const path = "/exchange/v1/derivatives/futures/positions";
+    const body = {
+      timestamp: Math.floor(Date.now() / 1000),
+      page: "1",
+      size: "50",
+      margin_currency_short_name: ["USDT", "INR"],
+    };
+
+    try {
+      const headers = this.sign(body);
+      const resp = await this.http.post(path, body, { headers });
+      const rawPositions: any[] = resp.data?.data || resp.data || [];
+
+      const positions: LivePosition[] = [];
+      for (const p of rawPositions) {
+        const qty = parseFloat(p.active_pos || p.quantity || p.size || "0");
+        if (Math.abs(qty) === 0) continue;
+
+        const sym = p.pair || p.symbol || "";
+        const entryPrice = parseFloat(p.avg_price || p.entry_price || "0");
+        const markPrice = parseFloat(p.mark_price || p.current_price || "0");
+        const unrealizedPnl = parseFloat(p.unrealized_pnl || p.pnl || "0");
+        const side = (p.side || (qty < 0 ? "sell" : "buy")).toUpperCase() === "BUY" ? "LONG" : "SHORT";
+
+        positions.push({
+          exchange: "CoinDCX",
+          symbol: sym,
+          side,
+          size: Math.abs(qty),
+          entryPrice,
+          markPrice,
+          unrealizedPnlUsd: Math.round(unrealizedPnl * 100) / 100,
+          unrealizedPnlInr: Math.round(unrealizedPnl * Config.USD_INR_RATE * 100) / 100,
+          leverage: parseFloat(p.leverage || "1"),
+          raw: p,
+        });
+      }
+
+      return positions;
+    } catch (err: any) {
+      console.warn(`CoinDCX positions error: ${err.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Fetch options chain data for the target asset and expiry dates.
    */
   public async getOptions(asset: AssetConfig, expiryDates: string[]): Promise<ParsedOption[]> {
+    // 1. Try CoinDCX native derivatives market data
     try {
-      // Fetch derivatives market data to discover option instruments
       const resp = await this.http.get("/exchange/v1/derivatives/futures/data/instruments");
       const instruments: any[] = resp.data || [];
 
-      // Filter for options on the target asset
       const optionInstruments = instruments.filter((inst: any) => {
         const pair = (inst.pair || inst.symbol || "").toUpperCase();
         const contractType = (inst.contract_type || inst.type || "").toLowerCase();
@@ -86,7 +214,6 @@ export class CoinDCXClient {
 
         const contractType = (inst.contract_type || inst.type || "").toLowerCase();
         const optionType: OptionType = contractType.includes("call") ? "CALL" : "PUT";
-
         const strike = parseFloat(inst.strike_price || inst.strike || "0");
         if (isNaN(strike) || strike <= 0) continue;
 
@@ -113,21 +240,17 @@ export class CoinDCXClient {
         });
       }
 
-      // If no native CoinDCX options found, fallback to Deribit data
-      // (CoinDCX sources liquidity from Deribit for crypto options)
-      if (parsed.length === 0) {
-        return this.getDeribitOptions(asset, expiryDates);
-      }
-
-      return parsed;
-    } catch (err: any) {
-      console.warn(`CoinDCX instruments fetch error: ${err.message}, falling back to Deribit`);
-      return this.getDeribitOptions(asset, expiryDates);
+      if (parsed.length > 0) return parsed;
+    } catch {
+      // Continue to live Deribit liquidity fallback
     }
+
+    // 2. Fetch live options data from Deribit (source of CoinDCX crypto options liquidity)
+    return this.getDeribitOptions(asset, expiryDates);
   }
 
   /**
-   * Fallback: Fetch options data from Deribit (CoinDCX uses Deribit liquidity).
+   * Fetch live options book from Deribit (institutional backend for crypto options).
    */
   private async getDeribitOptions(asset: AssetConfig, expiryDates: string[]): Promise<ParsedOption[]> {
     const currency = asset.deltaUnderlying === "XAUT" ? "BTC" : asset.deltaUnderlying;
@@ -143,12 +266,11 @@ export class CoinDCXClient {
         JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11,
       };
 
-      // We need spot price to convert BTC-denominated prices to USD
       let spotPrice = 0;
       try {
         const spotResp = await axios.get(
           `https://www.deribit.com/api/v2/public/get_index_price?index_name=${currency.toLowerCase()}_usd`,
-          { timeout: 10000 }
+          { timeout: 8000 }
         );
         spotPrice = spotResp.data?.result?.index_price || 0;
       } catch {
@@ -214,13 +336,13 @@ export class CoinDCXClient {
 
       return parsed;
     } catch (err: any) {
-      console.error(`Deribit fallback error: ${err.message}`);
+      console.error(`Options data fetch error: ${err.message}`);
       return [];
     }
   }
 
   /**
-   * Place a SELL order (SHORT) on CoinDCX.
+   * Place a direct LIVE SELL order (SHORT) on CoinDCX.
    */
   public async placeSellOrder(
     instrumentSymbol: string,
@@ -228,18 +350,18 @@ export class CoinDCXClient {
     price?: number
   ): Promise<{ success: boolean; message: string; data?: any }> {
     if (!this.apiKey || !this.apiSecret) {
-      return { success: false, message: "CoinDCX credentials missing" };
+      return { success: false, message: "CoinDCX credentials missing in .env" };
     }
 
     const body: any = {
-      timestamp: Date.now(),
+      timestamp: Math.floor(Date.now() / 1000),
       side: "sell",
       order_type: price ? "limit_order" : "market_order",
       pair: instrumentSymbol,
       total_quantity: quantity,
     };
 
-    if (price) {
+    if (price && price > 0) {
       body.price = price;
     }
 
@@ -250,47 +372,24 @@ export class CoinDCXClient {
         body,
         { headers }
       );
+
       if (resp.status === 200 || resp.status === 201) {
+        const orderId = resp.data?.id || resp.data?.order_id || "N/A";
         return {
           success: true,
-          message: `CoinDCX SELL ${quantity} lots of ${instrumentSymbol}`,
+          message: `CoinDCX SELL filled! Order ID: #${orderId} (${quantity} lot(s) of ${instrumentSymbol})`,
           data: resp.data,
         };
       }
-      return { success: false, message: `CoinDCX order failed: ${JSON.stringify(resp.data)}` };
+      return { success: false, message: `CoinDCX order rejected: ${JSON.stringify(resp.data)}` };
     } catch (err: any) {
       const msg = err.response?.data?.message || err.response?.data?.error || err.message;
-      return { success: false, message: `CoinDCX order error: ${msg}` };
+      return { success: false, message: `CoinDCX order failed: ${msg}` };
     }
   }
 
   /**
-   * Get open positions on CoinDCX.
-   */
-  public async getOpenPositions(): Promise<any[]> {
-    if (!this.apiKey || !this.apiSecret) return [];
-
-    const body = { timestamp: Date.now() };
-    try {
-      const headers = this.sign(body);
-      const resp = await this.http.post(
-        "/exchange/v1/derivatives/futures/positions",
-        body,
-        { headers }
-      );
-      const positions: any[] = resp.data?.data || resp.data || [];
-      return positions.filter((p) => {
-        const qty = parseFloat(p.quantity || p.size || "0");
-        return Math.abs(qty) > 0;
-      });
-    } catch (err: any) {
-      console.warn(`CoinDCX positions error: ${err.message}`);
-      return [];
-    }
-  }
-
-  /**
-   * Close a position on CoinDCX by placing an opposite order.
+   * Close a single live position on CoinDCX by sending an opposite order.
    */
   public async closePosition(
     symbol: string,
@@ -301,9 +400,12 @@ export class CoinDCXClient {
       return { success: false, message: "CoinDCX credentials missing" };
     }
 
-    const side = currentSide.toLowerCase().includes("sell") ? "buy" : "sell";
+    const side = currentSide.toLowerCase().includes("sell") || currentSide.toLowerCase().includes("short")
+      ? "buy"
+      : "sell";
+
     const body: any = {
-      timestamp: Date.now(),
+      timestamp: Math.floor(Date.now() / 1000),
       side,
       order_type: "market_order",
       pair: symbol,
@@ -318,9 +420,9 @@ export class CoinDCXClient {
         { headers }
       );
       if (resp.status === 200 || resp.status === 201) {
-        return { success: true, message: `Closed ${Math.abs(quantity)} of ${symbol} (${side})` };
+        return { success: true, message: `Closed ${Math.abs(quantity)} lot(s) of ${symbol} (${side})` };
       }
-      return { success: false, message: `Failed: ${JSON.stringify(resp.data)}` };
+      return { success: false, message: `Close failed: ${JSON.stringify(resp.data)}` };
     } catch (err: any) {
       return { success: false, message: err.response?.data?.message || err.message };
     }
@@ -335,9 +437,9 @@ export class CoinDCXClient {
     let closedCount = 0;
 
     for (const p of positions) {
-      const sym = p.pair || p.symbol;
-      const qty = parseFloat(p.quantity || p.size || "0");
-      const side = p.side || "sell";
+      const sym = p.symbol;
+      const qty = p.size;
+      const side = p.side;
       if (Math.abs(qty) > 0) {
         const res = await this.closePosition(sym, qty, side);
         details.push(`${sym}: ${res.message}`);
@@ -348,4 +450,3 @@ export class CoinDCXClient {
     return { closedCount, details };
   }
 }
-

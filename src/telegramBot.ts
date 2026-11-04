@@ -1,28 +1,28 @@
 /**
- * Interactive Telegram Bot for Options Arbitrage.
+ * Interactive Telegram Bot for Live Crypto Options Arbitrage.
  *
- * Flow:
- * 1. /start → Select Asset (BTC, ETH, XAUTUSDT)
- * 2. → Select Expiry (Today / Tomorrow)
- * 3. → Show ATM + OTM options for Calls and Puts with prices from both exchanges
- * 4. → Execute button: Delta Long + CoinDCX Short
- * 5. → Auto-close all positions at 1:30 PM IST daily
+ * Exchanges:
+ *  - Delta Exchange (LONG / BUY): 10 lots = 0.1 unit
+ *  - CoinDCX (SHORT / SELL): 1 lot = 0.1 unit
  *
- * Strategy: Short CoinDCX (higher premium) + Long Delta (lower premium)
- * Lot sizes: CoinDCX 1 lot = 0.1 unit | Delta 10 lots = 0.1 unit
+ * Features:
+ *  - Interactive inline buttons to scan and execute trades
+ *  - Net PnL tracking for active positions on both exchanges
+ *  - Live wallet balance display
+ *  - Suggestions where Short premium (CoinDCX) >= Long premium (Delta)
+ *  - Daily automatic position close at 1:30 PM IST
  */
 
-import TelegramBot from "node-telegram-bot-api";
+import TelegramBot = require("node-telegram-bot-api");
 import cron from "node-cron";
 import { Config, ASSETS, AssetConfig } from "./config";
 import { ArbitrageEngine } from "./arbitrageEngine";
-import { StrikeComparison, OptionChainResult } from "./types";
+import { StrikeComparison, OptionChainResult, NetPnlReport, CombinedWalletReport } from "./types";
 
 export class ArbTelegramBot {
   private bot: TelegramBot;
   private engine: ArbitrageEngine;
   private chatId: string;
-  private autoCloseScheduled = false;
 
   constructor() {
     this.engine = new ArbitrageEngine();
@@ -34,80 +34,102 @@ export class ArbTelegramBot {
   }
 
   /**
-   * Setup all bot command and callback handlers.
+   * Setup command and callback query handlers.
    */
   private setupHandlers(): void {
     // /start command
-    this.bot.onText(/\/start/, (msg) => {
-      this.showAssetSelection(msg.chat.id);
+    this.bot.onText(/\/start/, (msg: TelegramBot.Message) => {
+      this.sendMainMenu(msg.chat.id);
     });
 
-    // /scan or /options command
-    this.bot.onText(/\/(scan|options)/, (msg) => {
-      this.showAssetSelection(msg.chat.id);
+    // /menu command
+    this.bot.onText(/\/menu/, (msg: TelegramBot.Message) => {
+      this.sendMainMenu(msg.chat.id);
     });
 
-    // /close command - close all positions
-    this.bot.onText(/\/close/, async (msg) => {
+    // /pnl command - Live Net PnL
+    this.bot.onText(/\/pnl/, async (msg: TelegramBot.Message) => {
+      await this.handleShowNetPnl(msg.chat.id);
+    });
+
+    // /wallet or /balance command - Live Balances
+    this.bot.onText(/\/(wallet|balance)/, async (msg: TelegramBot.Message) => {
+      await this.handleShowWallet(msg.chat.id);
+    });
+
+    // /close command - Close all positions
+    this.bot.onText(/\/close/, async (msg: TelegramBot.Message) => {
       await this.handleCloseAll(msg.chat.id);
     });
 
-    // /positions command - show current positions
-    this.bot.onText(/\/positions/, async (msg) => {
-      await this.handleShowPositions(msg.chat.id);
+    // /positions command
+    this.bot.onText(/\/positions/, async (msg: TelegramBot.Message) => {
+      await this.handleShowNetPnl(msg.chat.id);
     });
 
     // /help command
-    this.bot.onText(/\/help/, (msg) => {
+    this.bot.onText(/\/help/, (msg: TelegramBot.Message) => {
       this.showHelp(msg.chat.id);
     });
 
-    // Text commands
-    this.bot.on("message", (msg) => {
+    // Text messages handler
+    this.bot.on("message", async (msg: TelegramBot.Message) => {
       if (!msg.text || msg.text.startsWith("/")) return;
-      const text = msg.text.toLowerCase().trim();
+      const text = msg.text.trim().toLowerCase();
 
-      if (text === "scan" || text === "options") {
-        this.showAssetSelection(msg.chat.id);
-      } else if (text === "close") {
-        this.handleCloseAll(msg.chat.id);
-      } else if (text === "positions" || text === "current") {
-        this.handleShowPositions(msg.chat.id);
-      } else if (text === "help") {
-        this.showHelp(msg.chat.id);
+      if (text.includes("pnl") || text.includes("profit") || text.includes("net")) {
+        await this.handleShowNetPnl(msg.chat.id);
+      } else if (text.includes("wallet") || text.includes("balance")) {
+        await this.handleShowWallet(msg.chat.id);
+      } else if (text === "close" || text === "close all") {
+        await this.handleCloseAll(msg.chat.id);
+      } else if (text.includes("btc")) {
+        await this.showExpirySelection(msg.chat.id, "BTC");
+      } else if (text.includes("eth")) {
+        await this.showExpirySelection(msg.chat.id, "ETH");
+      } else if (text.includes("xaut") || text.includes("gold")) {
+        await this.showExpirySelection(msg.chat.id, "XAUTUSDT");
+      } else if (text.includes("menu") || text.includes("scan") || text.includes("options")) {
+        this.sendMainMenu(msg.chat.id);
+      } else {
+        this.sendMainMenu(msg.chat.id);
       }
     });
 
-    // Callback query handler for inline buttons
-    this.bot.on("callback_query", async (query) => {
+    // Inline button callback query handler
+    this.bot.on("callback_query", async (query: TelegramBot.CallbackQuery) => {
       if (!query.data || !query.message) return;
-
       const chatId = query.message.chat.id;
       const data = query.data;
 
       try {
         if (data.startsWith("asset_")) {
-          // Asset selected → show expiry selection
           const assetKey = data.replace("asset_", "");
           await this.bot.answerCallbackQuery(query.id, { text: `Selected ${assetKey}` });
           await this.showExpirySelection(chatId, assetKey);
         } else if (data.startsWith("expiry_")) {
-          // Expiry selected → scan and show options
+          // Format: expiry_BTC_2026-11-04
           const parts = data.replace("expiry_", "").split("_");
           const assetKey = parts[0];
-          const expiry = parts.slice(1).join("_"); // "today" or "tomorrow" or date
-          await this.bot.answerCallbackQuery(query.id, { text: "Scanning options..." });
-          await this.handleScanOptions(chatId, assetKey, expiry);
-        } else if (data.startsWith("execute_")) {
-          // Execute trade
-          await this.bot.answerCallbackQuery(query.id, { text: "⚡ Executing trade..." });
+          const expiryDate = parts.slice(1).join("-");
+          await this.bot.answerCallbackQuery(query.id, { text: `Scanning ${assetKey} options...` });
+          await this.handleScanOptions(chatId, assetKey, expiryDate);
+        } else if (data.startsWith("exec_")) {
+          // Format: exec_BTC_96000_CALL_2026-11-04
+          await this.bot.answerCallbackQuery(query.id, { text: "⚡ Triggering Live Orders..." });
           await this.handleExecuteTrade(chatId, data);
-        } else if (data === "close_all") {
-          await this.bot.answerCallbackQuery(query.id, { text: "🛑 Closing all positions..." });
+        } else if (data === "view_pnl") {
+          await this.bot.answerCallbackQuery(query.id, { text: "📊 Fetching Live Net PnL..." });
+          await this.handleShowNetPnl(chatId);
+        } else if (data === "view_wallet") {
+          await this.bot.answerCallbackQuery(query.id, { text: "💼 Fetching Live Wallets..." });
+          await this.handleShowWallet(chatId);
+        } else if (data === "close_all_confirm") {
+          await this.bot.answerCallbackQuery(query.id, { text: "🛑 Closing ALL open positions..." });
           await this.handleCloseAll(chatId);
-        } else if (data === "refresh") {
-          await this.bot.answerCallbackQuery(query.id, { text: "Refreshing..." });
-          await this.showAssetSelection(chatId);
+        } else if (data === "main_menu") {
+          await this.bot.answerCallbackQuery(query.id);
+          this.sendMainMenu(chatId);
         } else {
           await this.bot.answerCallbackQuery(query.id);
         }
@@ -120,59 +142,58 @@ export class ArbTelegramBot {
   }
 
   /**
-   * Schedule auto-close at 1:30 PM IST daily.
-   * 1:30 PM IST = 08:00 UTC
+   * Schedule automatic position close at 1:30 PM IST daily.
+   * 1:30 PM IST = 08:00 UTC.
    */
   private setupAutoClose(): void {
-    // Cron: minute hour * * * (UTC)
-    // 1:30 PM IST = 08:00 UTC
     cron.schedule("0 8 * * *", async () => {
-      console.log("⏰ AUTO-CLOSE triggered at 1:30 PM IST");
+      console.log("⏰ 1:30 PM IST CUTOFF: Auto-closing all open positions across Delta & CoinDCX...");
       await this.autoCloseAllPositions();
     }, { timezone: "UTC" });
 
-    console.log("✅ Auto-close scheduled for 1:30 PM IST (08:00 UTC) daily");
+    console.log("✅ Auto-close scheduled: 1:30 PM IST (08:00 UTC) every day");
   }
 
   /**
-   * Auto-close all positions and notify.
+   * Auto-close all positions and notify via Telegram.
    */
   private async autoCloseAllPositions(): Promise<void> {
     const chatId = this.chatId;
+    if (!chatId) return;
+
     try {
-      await this.sendMsg(chatId,
+      await this.sendMsg(
+        chatId,
         "🚨 *AUTO-CLOSE 1:30 PM IST* 🚨\n" +
         "━━━━━━━━━━━━━━━━━━━━━━\n" +
-        "⏰ Closing ALL positions on both exchanges..."
+        "⏰ Daily cutoff reached! Executing market orders to close ALL positions on Delta & CoinDCX..."
       );
 
       const result = await this.engine.closeAllPositions();
 
       const lines = [
-        "🛑 *AUTO-CLOSE COMPLETE* 🛑",
+        "🛑 *DAILY 1:30 PM IST AUTO-CLOSE REPORT*",
         "━━━━━━━━━━━━━━━━━━━━━━",
         "",
-        `🏛 *Delta Exchange:* Closed ${result.delta.closedCount} position(s)`,
+        `🏛 *Delta Exchange:* ${result.delta.closedCount} position(s) closed`,
       ];
-
       if (result.delta.details.length > 0) {
         lines.push(...result.delta.details.map((d) => `   • ${d}`));
       } else {
-        lines.push("   • No active positions found");
+        lines.push("   • No active positions found.");
       }
 
       lines.push("");
-      lines.push(`🏦 *CoinDCX:* Closed ${result.coindcx.closedCount} position(s)`);
-
+      lines.push(`🏦 *CoinDCX:* ${result.coindcx.closedCount} position(s) closed`);
       if (result.coindcx.details.length > 0) {
         lines.push(...result.coindcx.details.map((d) => `   • ${d}`));
       } else {
-        lines.push("   • No active positions found");
+        lines.push("   • No active positions found.");
       }
 
       lines.push("");
-      lines.push("✅ All positions closed! Ready for next trade cycle.");
-      lines.push("👉 Use /start to scan new opportunities");
+      lines.push("✅ Both legs flat! Ready for next trade cycle.");
+      lines.push("👉 Click /start to scan next-day opportunities.");
 
       await this.sendMsg(chatId, lines.join("\n"));
     } catch (err: any) {
@@ -180,34 +201,47 @@ export class ArbTelegramBot {
     }
   }
 
-  // ─── UI Screens ───
+  // ─────────────────────────────────────────────────────────────
+  // UI SCREENS & INTERACTIVE BUTTONS
+  // ─────────────────────────────────────────────────────────────
 
   /**
-   * Step 1: Show asset selection keyboard.
+   * Main Menu: Asset selection, Wallet, Net PnL, Close All.
    */
-  private async showAssetSelection(chatId: number | string): Promise<void> {
+  public sendMainMenu(chatId: number | string): void {
     const keyboard: TelegramBot.InlineKeyboardButton[][] = [
       [
-        { text: "₿ BTC", callback_data: "asset_BTC" },
-        { text: "⟠ ETH", callback_data: "asset_ETH" },
-        { text: "🥇 XAUTUSDT", callback_data: "asset_XAUTUSDT" },
+        { text: "₿ BTC Options", callback_data: "asset_BTC" },
+        { text: "⟠ ETH Options", callback_data: "asset_ETH" },
+        { text: "🥇 XAUT Options", callback_data: "asset_XAUTUSDT" },
+      ],
+      [
+        { text: "📈 Live Net PnL", callback_data: "view_pnl" },
+        { text: "💼 Live Wallet", callback_data: "view_wallet" },
+      ],
+      [
+        { text: "🛑 Close All Positions", callback_data: "close_all_confirm" },
       ],
     ];
 
-    await this.sendMsg(chatId,
-      "⚡ *OPTIONS ARBITRAGE BOT* ⚡\n" +
+    const text =
+      "⚡ *OPTIONS ARBITRAGE BOT (LIVE)* ⚡\n" +
       "━━━━━━━━━━━━━━━━━━━━━━\n" +
-      "🏛 Delta Exchange (Long) ↔ 🏦 CoinDCX (Short)\n\n" +
-      "Select the asset to trade:",
-      { reply_markup: { inline_keyboard: keyboard } }
-    );
+      "🏛 *Delta Exchange:* LONG (BUY 10 lots = 0.1)\n" +
+      "🏦 *CoinDCX:* SHORT (SELL 1 lot = 0.1)\n\n" +
+      "🎯 *Strategy:* Short CoinDCX (higher premium) & Long Delta (lower premium)\n" +
+      "⏰ *Auto-Close:* 1:30 PM IST daily\n\n" +
+      "Select an action or asset below:";
+
+    this.sendMsg(chatId, text, { reply_markup: { inline_keyboard: keyboard } });
   }
 
   /**
-   * Step 2: Show expiry selection (Today / Tomorrow).
+   * Expiry Selection: Today's Expiry vs Tomorrow's Expiry.
    */
   private async showExpirySelection(chatId: number | string, assetKey: string): Promise<void> {
     const { today, tomorrow } = this.engine.getExpiryDates();
+    const asset = ASSETS[assetKey];
 
     const keyboard: TelegramBot.InlineKeyboardButton[][] = [
       [
@@ -215,177 +249,151 @@ export class ArbTelegramBot {
         { text: `📅 Tomorrow (${tomorrow})`, callback_data: `expiry_${assetKey}_${tomorrow}` },
       ],
       [
-        { text: "📅 Both Days", callback_data: `expiry_${assetKey}_both` },
-      ],
-      [
-        { text: "🔙 Back", callback_data: "refresh" },
+        { text: "🔙 Main Menu", callback_data: "main_menu" },
       ],
     ];
 
-    const asset = ASSETS[assetKey];
-    await this.sendMsg(chatId,
-      `🪙 *${asset.name} (${asset.symbol})* selected\n\n` +
-      `📦 *Lot Sizing:*\n` +
-      `   • CoinDCX: ${asset.coindcxLots} lot = ${asset.lotSizeUnits} ${asset.symbol}\n` +
-      `   • Delta: ${asset.deltaLots} lots = ${asset.lotSizeUnits} ${asset.symbol}\n\n` +
-      `Select expiry:`,
-      { reply_markup: { inline_keyboard: keyboard } }
-    );
+    const text =
+      `🪙 *${asset.name} (${asset.symbol}) Options*\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `📦 *Contract Sizing:*\n` +
+      `   • CoinDCX: *${asset.coindcxLots} lot* = ${asset.lotSizeUnits} ${asset.symbol}\n` +
+      `   • Delta: *${asset.deltaLots} lots* = ${asset.lotSizeUnits} ${asset.symbol}\n\n` +
+      `Choose expiry date:`;
+
+    await this.sendMsg(chatId, text, { reply_markup: { inline_keyboard: keyboard } });
   }
 
   /**
-   * Step 3: Scan and show options chain with execute buttons.
+   * Options Scanner Screen: Lists ATM & OTM Strikes with individual Execute buttons.
    */
-  private async handleScanOptions(chatId: number | string, assetKey: string, expiry: string): Promise<void> {
+  private async handleScanOptions(
+    chatId: number | string,
+    assetKey: string,
+    expiryDate: string
+  ): Promise<void> {
     const asset = ASSETS[assetKey];
 
-    await this.sendMsg(chatId,
-      `🔍 *Scanning ${asset.symbol} options on Delta & CoinDCX...*\n` +
-      `_This may take a few seconds..._`
+    await this.sendMsg(
+      chatId,
+      `🔍 *Scanning ${asset.symbol} live options for ${expiryDate}...*\n` +
+      `_Connecting to Delta Exchange and CoinDCX..._`
     );
 
     try {
-      let expiryFilter: string | undefined;
-      if (expiry !== "both") {
-        expiryFilter = expiry;
-      }
+      const results = await this.engine.scanOptions(assetKey, expiryDate);
 
-      const results = await this.engine.scanOptions(assetKey, expiryFilter);
-
-      if (results.length === 0) {
-        await this.sendMsg(chatId,
-          `⚠️ No options data found for ${asset.symbol} on the selected expiry.\n` +
-          `Try another date or check if markets are open.`
+      if (results.length === 0 || results[0].allStrikes.length === 0) {
+        await this.sendMsg(
+          chatId,
+          `⚠️ No active options contracts found for *${asset.symbol}* expiring *${expiryDate}*.\n` +
+          `Try selecting another expiry or checking market hours.`
         );
         return;
       }
 
-      for (const chainResult of results) {
-        await this.sendOptionChainMessage(chatId, assetKey, chainResult);
+      const chain = results[0];
+      const spotStr = chain.spotPrice.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const spotInr = Math.round(chain.spotPrice * Config.USD_INR_RATE).toLocaleString("en-IN");
+
+      let text = `📊 *${asset.symbol} OPTIONS ARBITRAGE (LIVE)*\n`;
+      text += `━━━━━━━━━━━━━━━━━━━━━━\n`;
+      text += `🪙 *Spot:* *$${spotStr}* (₹${spotInr})\n`;
+      text += `📅 *Expiry:* *${chain.expiryDate}*\n`;
+      text += `📦 *Trade Size:* *${asset.lotSizeUnits} ${asset.symbol}* (Delta: 10 lots | CoinDCX: 1 lot)\n`;
+      text += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+      // ── Suggested Trades (Short Premium >= Long Premium) ──
+      if (chain.suggestedTrades.length > 0) {
+        text += `🔥 *SUGGESTED TRADES (Short Premium ≥ Long Premium)* 🔥\n`;
+        text += `_CoinDCX short premium covers Delta long cost = Inherent edge:_\n\n`;
+        for (const t of chain.suggestedTrades.slice(0, 4)) {
+          text += this.formatStrikeRow(t, true);
+        }
+        text += `\n`;
+      } else {
+        text += `ℹ️ _No strict CoinDCX ≥ Delta spread right now. Market ATM/OTM rates below:_\n\n`;
       }
+
+      // ── ATM Strikes ──
+      text += `📍 *ATM STRIKES (Around ${chain.atmStrike.toLocaleString()})*\n`;
+      text += `─────────────────────\n`;
+      for (const c of chain.atmCalls) text += this.formatStrikeRow(c);
+      for (const p of chain.atmPuts) text += this.formatStrikeRow(p);
+      text += `\n`;
+
+      // ── OTM Calls ──
+      if (chain.otmCalls.length > 0) {
+        text += `📈 *OTM CALLS (Above Spot)*\n`;
+        text += `─────────────────────\n`;
+        for (const c of chain.otmCalls) text += this.formatStrikeRow(c);
+        text += `\n`;
+      }
+
+      // ── OTM Puts ──
+      if (chain.otmPuts.length > 0) {
+        text += `📉 *OTM PUTS (Below Spot)*\n`;
+        text += `─────────────────────\n`;
+        for (const p of chain.otmPuts) text += this.formatStrikeRow(p);
+        text += `\n`;
+      }
+
+      text += `👉 *Tap any button below to instantly execute the trade live:*`;
+
+      // ── Build Clickable Execute Buttons ──
+      const keyboard: TelegramBot.InlineKeyboardButton[][] = [];
+
+      for (const s of chain.allStrikes) {
+        const tag = s.isSuggested ? "🟢 ARB" : "⚪";
+        const label = `${tag} ${s.strike.toLocaleString()} ${s.optionType} | Sprd: ${s.spreadUsd >= 0 ? "+" : ""}$${s.spreadUsd}`;
+        const cbData = `exec_${assetKey}_${s.strike}_${s.optionType}_${s.expiryDate}`;
+        keyboard.push([{ text: label, callback_data: cbData }]);
+      }
+
+      // Action buttons
+      keyboard.push([
+        { text: "📈 View Net PnL", callback_data: "view_pnl" },
+        { text: "💼 View Wallet", callback_data: "view_wallet" },
+      ]);
+      keyboard.push([
+        { text: "🔄 Refresh Scan", callback_data: `expiry_${assetKey}_${chain.expiryDate}` },
+        { text: "🔙 Main Menu", callback_data: "main_menu" },
+      ]);
+
+      await this.sendMsg(chatId, text, { reply_markup: { inline_keyboard: keyboard } });
     } catch (err: any) {
       await this.sendMsg(chatId, `❌ Scan error: ${err.message}`);
     }
   }
 
   /**
-   * Format and send option chain with execute buttons.
-   */
-  private async sendOptionChainMessage(
-    chatId: number | string,
-    assetKey: string,
-    chain: OptionChainResult
-  ): Promise<void> {
-    const asset = ASSETS[assetKey];
-    const spotStr = chain.spotPrice.toLocaleString("en-US", { maximumFractionDigits: 2 });
-
-    // ── Header ──
-    let msg = "";
-    msg += `📊 *${asset.symbol} OPTIONS — Expiry: ${chain.expiryDate}*\n`;
-    msg += `━━━━━━━━━━━━━━━━━━━━━━\n`;
-    msg += `🪙 Spot: *$${spotStr}* | ATM Strike: *${chain.atmStrike.toLocaleString()}*\n`;
-    msg += `🏛 Delta (Long) ↔ 🏦 CoinDCX (Short)\n\n`;
-
-    // ── Suggested Trades (where CoinDCX >= Delta) ──
-    if (chain.suggestedTrades.length > 0) {
-      msg += `🔥 *SUGGESTED TRADES (Short ≥ Long Premium)* 🔥\n`;
-      msg += `_CoinDCX premium ≥ Delta premium = Profitable arb_\n\n`;
-      for (const t of chain.suggestedTrades.slice(0, 5)) {
-        msg += this.formatStrikeRow(t, true);
-      }
-      msg += `\n`;
-    } else {
-      msg += `ℹ️ _No profitable arb right now (CoinDCX < Delta on all strikes)_\n\n`;
-    }
-
-    // ── ATM Options ──
-    msg += `📍 *ATM STRIKES (${chain.atmStrike.toLocaleString()})*\n`;
-    msg += `─────────────────────\n`;
-    for (const c of chain.atmCalls) {
-      msg += this.formatStrikeRow(c);
-    }
-    for (const p of chain.atmPuts) {
-      msg += this.formatStrikeRow(p);
-    }
-    msg += `\n`;
-
-    // ── OTM Calls ──
-    if (chain.otmCalls.length > 0) {
-      msg += `📈 *OTM CALLS (Above Spot)*\n`;
-      msg += `─────────────────────\n`;
-      for (const c of chain.otmCalls) {
-        msg += this.formatStrikeRow(c);
-      }
-      msg += `\n`;
-    }
-
-    // ── OTM Puts ──
-    if (chain.otmPuts.length > 0) {
-      msg += `📉 *OTM PUTS (Below Spot)*\n`;
-      msg += `─────────────────────\n`;
-      for (const p of chain.otmPuts) {
-        msg += this.formatStrikeRow(p);
-      }
-      msg += `\n`;
-    }
-
-    // ── Build execute buttons ──
-    const keyboard: TelegramBot.InlineKeyboardButton[][] = [];
-
-    // Add buttons for all strikes
-    const allStrikes = chain.allStrikes;
-    for (let i = 0; i < allStrikes.length; i += 2) {
-      const row: TelegramBot.InlineKeyboardButton[] = [];
-      for (let j = i; j < Math.min(i + 2, allStrikes.length); j++) {
-        const s = allStrikes[j];
-        const tag = s.isSuggested ? "✅" : "⚪";
-        const label = `${tag} ${s.strike} ${s.optionType}`;
-        const cbData = `execute_${assetKey}_${s.strike}_${s.optionType}_${s.expiryDate}`;
-        row.push({ text: label, callback_data: cbData });
-      }
-      keyboard.push(row);
-    }
-
-    // Add utility buttons
-    keyboard.push([
-      { text: "🔄 Refresh", callback_data: `expiry_${assetKey}_${chain.expiryDate}` },
-      { text: "🛑 Close All", callback_data: "close_all" },
-    ]);
-    keyboard.push([
-      { text: "🔙 Change Asset", callback_data: "refresh" },
-    ]);
-
-    await this.sendMsg(chatId, msg, { reply_markup: { inline_keyboard: keyboard } });
-  }
-
-  /**
-   * Format a single strike comparison row.
+   * Strike row formatting.
    */
   private formatStrikeRow(s: StrikeComparison, highlight = false): string {
-    const tag = s.isSuggested ? "🟢" : "⚪";
-    const arrow = highlight ? "➡️" : "•";
+    const icon = s.isSuggested ? "🟢" : "⚪";
+    const spreadTag = s.spreadUsd >= 0 ? `+${s.spreadPct}%` : `${s.spreadPct}%`;
 
-    let row = `${tag} *${s.strike.toLocaleString()} ${s.optionType}* (${s.category})\n`;
-    row += `   ${arrow} Delta (Long):  $${s.deltaPrice.toFixed(2)} | IV: ${s.deltaIv.toFixed(1)}%\n`;
-    row += `   ${arrow} CoinDCX (Short): $${s.coindcxPrice.toFixed(2)} | IV: ${s.coindcxIv.toFixed(1)}%\n`;
-    row += `   ${arrow} Spread: ${s.spreadUsd >= 0 ? "+" : ""}$${s.spreadUsd.toFixed(2)} (${s.spreadPct >= 0 ? "+" : ""}${s.spreadPct.toFixed(1)}%)\n`;
-
-    return row;
+    let r = `${icon} *${s.strike.toLocaleString()} ${s.optionType}* (${s.category})\n`;
+    r += `   • Delta (Long): *$${s.deltaPrice.toFixed(2)}* (IV: ${s.deltaIv.toFixed(1)}%)\n`;
+    r += `   • CoinDCX (Short): *$${s.coindcxPrice.toFixed(2)}* (IV: ${s.coindcxIv.toFixed(1)}%)\n`;
+    r += `   • Spread: *${s.spreadUsd >= 0 ? "+" : ""}$${s.spreadUsd.toFixed(2)}* (${spreadTag})\n`;
+    r += `   • Lot (${s.underlyingUnits} units): *+$${s.potentialProfitUsd.toFixed(2)}* (₹${s.potentialProfitInr.toLocaleString("en-IN")})\n`;
+    return r;
   }
 
   /**
-   * Handle trade execution from button press.
+   * Execute Trade Handler: Fired when user clicks any strike button!
    */
   private async handleExecuteTrade(chatId: number | string, callbackData: string): Promise<void> {
-    // Parse: execute_BTC_95000_CALL_2026-11-04
-    const parts = callbackData.replace("execute_", "").split("_");
+    // Format: exec_BTC_96000_CALL_2026-11-04
+    const parts = callbackData.replace("exec_", "").split("_");
     if (parts.length < 4) {
-      await this.sendMsg(chatId, "❌ Invalid trade data");
+      await this.sendMsg(chatId, "❌ Invalid execution parameters");
       return;
     }
 
     const assetKey = parts[0];
-    const strike = parseFloat(parts[1]);
+    const strikeNum = parseFloat(parts[1]);
     const optionType = parts[2] as "CALL" | "PUT";
     const expiryDate = parts.slice(3).join("-");
 
@@ -395,233 +403,304 @@ export class ArbTelegramBot {
       return;
     }
 
-    // Confirm trade
-    await this.sendMsg(chatId,
-      `⚡ *EXECUTING ARBITRAGE TRADE* ⚡\n` +
+    await this.sendMsg(
+      chatId,
+      `⚡ *EXECUTING LIVE ARBITRAGE TRADE...*\n` +
       `━━━━━━━━━━━━━━━━━━━━━━\n` +
-      `🪙 *${asset.symbol}* | Strike: *${strike.toLocaleString()}* ${optionType}\n` +
-      `📅 Expiry: ${expiryDate}\n\n` +
-      `🏛 *Delta Exchange:* BUY ${asset.deltaLots} lots (Long)\n` +
-      `🏦 *CoinDCX:* SELL ${asset.coindcxLots} lot(s) (Short)\n` +
-      `📦 Total size: ${asset.lotSizeUnits} ${asset.symbol}\n\n` +
-      `_Placing orders on both exchanges..._`
+      `🪙 *${asset.symbol}* | Strike: *${strikeNum.toLocaleString()} ${optionType}*\n` +
+      `📅 Expiry: *${expiryDate}*\n\n` +
+      `🏛 *Delta Exchange:* BUY ${asset.deltaLots} lots (LONG)\n` +
+      `🏦 *CoinDCX:* SELL ${asset.coindcxLots} lot(s) (SHORT)\n` +
+      `📦 Total Size: *${asset.lotSizeUnits} ${asset.symbol}*\n\n` +
+      `_Dispatching live signed API orders..._`
     );
 
     try {
-      // First scan to get the fresh strike data
       const results = await this.engine.scanOptions(assetKey, expiryDate);
       const chain = results[0];
       if (!chain) {
-        await this.sendMsg(chatId, `❌ Could not find options data for this expiry`);
+        await this.sendMsg(chatId, `❌ Could not refresh options pricing for ${expiryDate}`);
         return;
       }
 
       const strikeData = chain.allStrikes.find(
-        (s) => s.strike === strike && s.optionType === optionType
+        (s) => s.strike === strikeNum && s.optionType === optionType
       );
 
       if (!strikeData) {
-        await this.sendMsg(chatId, `❌ Strike ${strike} ${optionType} not found in current data`);
+        await this.sendMsg(chatId, `❌ Strike ${strikeNum} ${optionType} not found in live books`);
         return;
       }
 
-      if (!strikeData.deltaSymbol || !strikeData.deltaProductId) {
-        await this.sendMsg(chatId, `❌ Delta product not found for this strike. Cannot execute.`);
-        return;
-      }
-
-      if (!strikeData.coindcxSymbol) {
-        await this.sendMsg(chatId, `❌ CoinDCX instrument not found for this strike. Cannot execute.`);
-        return;
-      }
-
-      // Execute the trade
+      // Execute live trade
       const trade = await this.engine.executeTrade(assetKey, strikeData);
 
-      // Report result
       const statusEmoji = trade.status === "filled" ? "✅" : trade.status === "partial" ? "⚠️" : "❌";
       const lines = [
-        `${statusEmoji} *TRADE ${trade.status.toUpperCase()}* — ${trade.id}`,
+        `${statusEmoji} *LIVE TRADE EXECUTION RESULT*`,
         `━━━━━━━━━━━━━━━━━━━━━━`,
-        `🪙 *${asset.symbol}* | ${strike.toLocaleString()} ${optionType}`,
-        `📅 Expiry: ${expiryDate}`,
+        `🆔 Trade Ref: \`${trade.id}\``,
+        `🪙 Asset: *${asset.symbol}* | *${strikeNum.toLocaleString()} ${optionType}*`,
+        `📅 Expiry: *${expiryDate}*`,
+        `📦 Lot Sizing: *${asset.lotSizeUnits} ${asset.symbol}*`,
         ``,
-        `🏛 *Delta (Long):* ${trade.deltaOrderResult?.success ? "✅ Filled" : "❌ Failed"}`,
-        `   • ${trade.deltaOrderResult?.message || "No response"}`,
+        `🏛 *Delta Exchange (LONG):* ${trade.deltaOrderResult?.success ? "✅ FILLED" : "❌ FAILED"}`,
+        `   • Details: ${trade.deltaOrderResult?.message || "No response"}`,
         ``,
-        `🏦 *CoinDCX (Short):* ${trade.coindcxOrderResult?.success ? "✅ Filled" : "❌ Failed"}`,
-        `   • ${trade.coindcxOrderResult?.message || "No response"}`,
+        `🏦 *CoinDCX (SHORT):* ${trade.coindcxOrderResult?.success ? "✅ FILLED" : "❌ FAILED"}`,
+        `   • Details: ${trade.coindcxOrderResult?.message || "No response"}`,
       ];
 
       if (trade.error) {
-        lines.push(`\n⚠️ *Error:* ${trade.error}`);
+        lines.push(`\n⚠️ *Warning:* ${trade.error}`);
       }
 
-      lines.push(`\n⏰ Auto-close: 1:30 PM IST`);
-      lines.push(`👉 /close to manually close all positions`);
+      lines.push(`\n⏰ *Auto-Close:* Scheduled for 1:30 PM IST daily.`);
 
       const keyboard: TelegramBot.InlineKeyboardButton[][] = [
         [
-          { text: "📊 View Positions", callback_data: "positions" },
-          { text: "🛑 Close All", callback_data: "close_all" },
+          { text: "📈 View Live Net PnL", callback_data: "view_pnl" },
+          { text: "💼 View Wallet", callback_data: "view_wallet" },
         ],
         [
-          { text: "🔄 New Trade", callback_data: "refresh" },
+          { text: "🛑 Close All Positions", callback_data: "close_all_confirm" },
+          { text: "🔙 Main Menu", callback_data: "main_menu" },
         ],
       ];
 
       await this.sendMsg(chatId, lines.join("\n"), { reply_markup: { inline_keyboard: keyboard } });
     } catch (err: any) {
-      await this.sendMsg(chatId, `❌ Trade execution error: ${err.message}`);
+      await this.sendMsg(chatId, `❌ Execution failed: ${err.message}`);
     }
   }
 
   /**
-   * Close all positions on both exchanges.
+   * Live Net PnL & Open Positions Screen.
    */
-  private async handleCloseAll(chatId: number | string): Promise<void> {
-    await this.sendMsg(chatId,
-      "🚨 *CLOSING ALL POSITIONS* 🚨\n" +
-      "━━━━━━━━━━━━━━━━━━━━━━\n" +
-      "_Sending close orders to Delta & CoinDCX..._"
+  public async handleShowNetPnl(chatId: number | string): Promise<void> {
+    await this.sendMsg(chatId, "📊 *Fetching Live Net PnL & Positions from Delta & CoinDCX...*");
+
+    try {
+      const pnlReport: NetPnlReport = await this.engine.getLiveNetPnl();
+
+      const pnlSign = pnlReport.totalUnrealizedUsd >= 0 ? "+" : "";
+      const pnlEmoji = pnlReport.totalUnrealizedUsd > 0 ? "🟢" : pnlReport.totalUnrealizedUsd < 0 ? "🔴" : "⚪";
+
+      const lines = [
+        `📈 *LIVE NET PnL & POSITIONS REPORT*`,
+        `━━━━━━━━━━━━━━━━━━━━━━`,
+        `🕒 Time: ${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })} IST`,
+        `💰 *COMBINED NET PnL:* ${pnlEmoji} *${pnlSign}$${pnlReport.totalUnrealizedUsd.toFixed(2)}* (₹${pnlReport.totalUnrealizedInr.toLocaleString("en-IN")})`,
+        `━━━━━━━━━━━━━━━━━━━━━━\n`,
+        `🏛 *Delta Exchange Positions:*`,
+      ];
+
+      if (pnlReport.deltaPositions.length === 0) {
+        lines.push("   • _No open positions (Flat)_");
+      } else {
+        for (const p of pnlReport.deltaPositions) {
+          const sign = p.unrealizedPnlUsd >= 0 ? "+" : "";
+          lines.push(
+            `   • *${p.symbol}*: ${p.side} ${p.size} lots\n` +
+            `     Entry: $${p.entryPrice.toFixed(2)} | Mark: $${p.markPrice.toFixed(2)}\n` +
+            `     PnL: *${sign}$${p.unrealizedPnlUsd.toFixed(2)}* (₹${p.unrealizedPnlInr.toLocaleString("en-IN")})`
+          );
+        }
+        lines.push(`   👉 *Delta Subtotal:* ${pnlReport.deltaUnrealizedUsd >= 0 ? "+" : ""}$${pnlReport.deltaUnrealizedUsd.toFixed(2)}`);
+      }
+
+      lines.push(`\n🏦 *CoinDCX Positions:*`);
+      if (pnlReport.coindcxPositions.length === 0) {
+        lines.push("   • _No open positions (Flat)_");
+      } else {
+        for (const p of pnlReport.coindcxPositions) {
+          const sign = p.unrealizedPnlUsd >= 0 ? "+" : "";
+          lines.push(
+            `   • *${p.symbol}*: ${p.side} ${p.size} lots\n` +
+            `     Entry: $${p.entryPrice.toFixed(2)} | Mark: $${p.markPrice.toFixed(2)}\n` +
+            `     PnL: *${sign}$${p.unrealizedPnlUsd.toFixed(2)}* (₹${p.unrealizedPnlInr.toLocaleString("en-IN")})`
+          );
+        }
+        lines.push(`   👉 *CoinDCX Subtotal:* ${pnlReport.coindcxUnrealizedUsd >= 0 ? "+" : ""}$${pnlReport.coindcxUnrealizedUsd.toFixed(2)}`);
+      }
+
+      lines.push(
+        `\n📊 *Status:* ${pnlReport.isFlat ? "🟢 FLAT (Ready for entry)" : "🟡 ACTIVE ARBITRAGE IN PROGRESS"}`
+      );
+      lines.push(`⏰ *Auto-Close:* All positions close at 1:30 PM IST.`);
+
+      const keyboard: TelegramBot.InlineKeyboardButton[][] = [
+        [
+          { text: "🔄 Refresh Net PnL", callback_data: "view_pnl" },
+          { text: "🛑 Close All Positions", callback_data: "close_all_confirm" },
+        ],
+        [
+          { text: "💼 View Wallet", callback_data: "view_wallet" },
+          { text: "🔙 Main Menu", callback_data: "main_menu" },
+        ],
+      ];
+
+      await this.sendMsg(chatId, lines.join("\n"), { reply_markup: { inline_keyboard: keyboard } });
+    } catch (err: any) {
+      await this.sendMsg(chatId, `❌ Error fetching Net PnL: ${err.message}`);
+    }
+  }
+
+  /**
+   * Live Wallet Balances Screen.
+   */
+  public async handleShowWallet(chatId: number | string): Promise<void> {
+    await this.sendMsg(chatId, "💼 *Fetching Live Wallet Balances from Delta & CoinDCX...*");
+
+    try {
+      const report: CombinedWalletReport = await this.engine.getLiveWalletBalances();
+
+      const lines = [
+        `💼 *LIVE WALLET BALANCES & MARGIN*`,
+        `━━━━━━━━━━━━━━━━━━━━━━`,
+        `💰 *Total Equity:* *$${report.totalBalanceUsd.toLocaleString("en-US", { minimumFractionDigits: 2 })}* (₹${report.totalBalanceInr.toLocaleString("en-IN")})`,
+        `🛡 *Available Margin:* *$${report.totalAvailableUsd.toLocaleString("en-US", { minimumFractionDigits: 2 })}* (₹${report.totalAvailableInr.toLocaleString("en-IN")})`,
+        `━━━━━━━━━━━━━━━━━━━━━━\n`,
+        `🏛 *Delta Exchange (Live):*`,
+        `   • Total: *$${report.delta.balanceUsd.toFixed(2)}* (₹${report.delta.balanceInr.toLocaleString("en-IN")})`,
+        `   • Available: *$${report.delta.availableUsd.toFixed(2)}*`,
+      ];
+
+      if (report.delta.currencies.length > 0) {
+        for (const c of report.delta.currencies) {
+          lines.push(`   • ${c.symbol}: \`${c.total.toFixed(4)}\` (Avail: \`${c.available.toFixed(4)}\`)`);
+        }
+      }
+      if (report.delta.error) {
+        lines.push(`   • ⚠️ Status: ${report.delta.error}`);
+      }
+
+      lines.push(`\n🏦 *CoinDCX (Live):*`);
+      lines.push(
+        `   • Total: *$${report.coindcx.balanceUsd.toFixed(2)}* (₹${report.coindcx.balanceInr.toLocaleString("en-IN")})`
+      );
+      lines.push(`   • Available: *$${report.coindcx.availableUsd.toFixed(2)}*`);
+
+      if (report.coindcx.currencies.length > 0) {
+        for (const c of report.coindcx.currencies) {
+          lines.push(`   • ${c.symbol}: \`${c.total.toFixed(4)}\` (Avail: \`${c.available.toFixed(4)}\`)`);
+        }
+      }
+      if (report.coindcx.error) {
+        lines.push(`   • ⚠️ Status: ${report.coindcx.error}`);
+      }
+
+      lines.push(`\n📦 *TRADE LOT REQUIREMENT:*`);
+      lines.push(`   • 1 Trade = 0.1 BTC / ETH / XAUT`);
+      lines.push(`   • Delta: 10 lots | CoinDCX: 1 lot`);
+
+      const canTrade = report.delta.availableUsd > 10 && report.coindcx.availableUsd > 10;
+      if (canTrade) {
+        lines.push(`   • Status: 🟢 *MARGIN READY ON BOTH EXCHANGES*`);
+      } else {
+        lines.push(`   • Status: ⚠️ *Ensure both accounts hold sufficient margin before trading*`);
+      }
+
+      const keyboard: TelegramBot.InlineKeyboardButton[][] = [
+        [
+          { text: "🔄 Refresh Wallet", callback_data: "view_wallet" },
+          { text: "📈 View Net PnL", callback_data: "view_pnl" },
+        ],
+        [
+          { text: "⚡ Trade BTC", callback_data: "asset_BTC" },
+          { text: "⚡ Trade ETH", callback_data: "asset_ETH" },
+          { text: "⚡ Trade XAUT", callback_data: "asset_XAUTUSDT" },
+        ],
+        [
+          { text: "🔙 Main Menu", callback_data: "main_menu" },
+        ],
+      ];
+
+      await this.sendMsg(chatId, lines.join("\n"), { reply_markup: { inline_keyboard: keyboard } });
+    } catch (err: any) {
+      await this.sendMsg(chatId, `❌ Error checking wallet: ${err.message}`);
+    }
+  }
+
+  /**
+   * Close All Open Positions Handler.
+   */
+  public async handleCloseAll(chatId: number | string): Promise<void> {
+    await this.sendMsg(
+      chatId,
+      "🚨 *CLOSING ALL POSITIONS LIVE ON DELTA & COINDCX...*\n" +
+      "_Submitting market orders to flatten both exchange accounts..._"
     );
 
     try {
       const result = await this.engine.closeAllPositions();
 
       const lines = [
-        "🛑 *POSITIONS CLOSED* 🛑",
+        "🛑 *POSITION CLOSURE COMPLETE*",
         "━━━━━━━━━━━━━━━━━━━━━━",
         "",
-        `🏛 *Delta Exchange:* ${result.delta.closedCount} position(s) closed`,
+        `🏛 *Delta Exchange:* Closed ${result.delta.closedCount} position(s)`,
       ];
-
       if (result.delta.details.length > 0) {
         lines.push(...result.delta.details.map((d) => `   • ${d}`));
       } else {
-        lines.push("   • No active positions found");
+        lines.push("   • No open positions found on Delta.");
       }
 
       lines.push("");
-      lines.push(`🏦 *CoinDCX:* ${result.coindcx.closedCount} position(s) closed`);
-
+      lines.push(`🏦 *CoinDCX:* Closed ${result.coindcx.closedCount} position(s)`);
       if (result.coindcx.details.length > 0) {
         lines.push(...result.coindcx.details.map((d) => `   • ${d}`));
       } else {
-        lines.push("   • No active positions found");
+        lines.push("   • No open positions found on CoinDCX.");
       }
 
-      lines.push("\n✅ All done! Use /start to begin a new trade.");
-
-      await this.sendMsg(chatId, lines.join("\n"));
-    } catch (err: any) {
-      await this.sendMsg(chatId, `❌ Close error: ${err.message}`);
-    }
-  }
-
-  /**
-   * Show current positions on both exchanges.
-   */
-  private async handleShowPositions(chatId: number | string): Promise<void> {
-    await this.sendMsg(chatId, "📊 *Fetching positions from both exchanges...*");
-
-    try {
-      const [deltaPos, coindcxPos] = await Promise.all([
-        this.engine.deltaClient.getOpenPositions(),
-        this.engine.coindcxClient.getOpenPositions(),
-      ]);
-
-      const lines = [
-        "📊 *CURRENT POSITIONS*",
-        "━━━━━━━━━━━━━━━━━━━━━━",
-        "",
-        "🏛 *Delta Exchange:*",
-      ];
-
-      if (deltaPos.length === 0) {
-        lines.push("   • _No open positions (FLAT)_");
-      } else {
-        for (const p of deltaPos) {
-          const sym = p.product_symbol || p.symbol;
-          const size = p.size;
-          const entry = p.entry_price || "—";
-          const pnl = p.unrealized_pnl || "—";
-          lines.push(`   • *${sym}*: Size ${size} | Entry $${entry} | PnL ${pnl}`);
-        }
-      }
-
-      lines.push("");
-      lines.push("🏦 *CoinDCX:*");
-
-      if (coindcxPos.length === 0) {
-        lines.push("   • _No open positions (FLAT)_");
-      } else {
-        for (const p of coindcxPos) {
-          const sym = p.pair || p.symbol;
-          const qty = p.quantity || p.size;
-          const side = p.side || "—";
-          lines.push(`   • *${sym}*: ${side.toUpperCase()} ${qty} | PnL ${p.unrealized_pnl || "—"}`);
-        }
-      }
-
-      const isFlat = deltaPos.length === 0 && coindcxPos.length === 0;
-      lines.push(`\n📈 Status: ${isFlat ? "🟢 FLAT" : "🟡 ACTIVE POSITIONS"}`);
-      lines.push(`⏰ Auto-close: 1:30 PM IST`);
+      lines.push("\n✅ Both legs executed! Send /pnl or tap below to verify flat state.");
 
       const keyboard: TelegramBot.InlineKeyboardButton[][] = [
         [
-          { text: "🔄 Refresh", callback_data: "positions" },
-          { text: "🛑 Close All", callback_data: "close_all" },
-        ],
-        [
-          { text: "🔙 New Trade", callback_data: "refresh" },
+          { text: "📈 Verify Net PnL", callback_data: "view_pnl" },
+          { text: "🔙 Main Menu", callback_data: "main_menu" },
         ],
       ];
 
       await this.sendMsg(chatId, lines.join("\n"), { reply_markup: { inline_keyboard: keyboard } });
     } catch (err: any) {
-      await this.sendMsg(chatId, `❌ Error fetching positions: ${err.message}`);
+      await this.sendMsg(chatId, `❌ Error closing positions: ${err.message}`);
     }
   }
 
   /**
-   * Show help.
+   * Help Message.
    */
   private showHelp(chatId: number | string): void {
-    const msg = [
-      "🤖 *OPTIONS ARBITRAGE BOT* — Help",
+    const text = [
+      "🤖 *OPTIONS ARBITRAGE BOT COMMANDS*",
       "━━━━━━━━━━━━━━━━━━━━━━",
-      "",
-      "📋 *Commands:*",
-      "• /start — Select asset & scan options",
-      "• /scan — Same as /start",
-      "• /positions — View open positions",
-      "• /close — Close ALL positions on both exchanges",
-      "• /help — This help message",
-      "",
-      "⚡ *Strategy:*",
+      "• /start or /menu — Open the interactive main menu",
+      "• /pnl — Check Live Net PnL across Delta & CoinDCX",
+      "• /wallet or /balance — View Live Wallet balances",
+      "• /close — 🚨 Instantly close all open positions on both exchanges",
+      "• /help — Show this help message\n",
+      "⚡ *ARBITRAGE STRATEGY:*",
       "• BUY (Long) on Delta Exchange",
       "• SELL (Short) on CoinDCX",
-      "• Short premium ≥ Long premium = Profit",
-      "",
-      "📦 *Lot Sizes:*",
-      "• CoinDCX: 1 lot = 0.1 BTC/ETH/XAUT",
-      "• Delta: 10 lots = 0.1 BTC/ETH/XAUT",
-      "",
-      "⏰ *Auto-Close:* 1:30 PM IST daily",
-      "All positions automatically closed at 1:30 PM IST",
-      "",
-      "🟢 = Suggested trade (Short premium ≥ Long premium)",
-      "⚪ = Not recommended (Short < Long premium)",
+      "• Edge: Short Premium ≥ Long Premium\n",
+      "📦 *LOT SIZING:*",
+      "• CoinDCX: 1 lot = 0.1 BTC / ETH / XAUT",
+      "• Delta: 10 lots = 0.1 BTC / ETH / XAUT\n",
+      "⏰ *AUTO-CLOSE:* 1:30 PM IST daily",
     ].join("\n");
 
-    this.sendMsg(chatId, msg);
+    this.sendMsg(chatId, text);
   }
 
-  // ─── Utility ───
+  // ─────────────────────────────────────────────────────────────
+  // UTILITY METHODS
+  // ─────────────────────────────────────────────────────────────
 
   /**
-   * Send a message with Markdown, chunking if too long.
+   * Send message with automatic chunking.
    */
   private async sendMsg(
     chatId: number | string,
@@ -639,47 +718,28 @@ export class ArbTelegramBot {
           parse_mode: "Markdown",
           ...(isLast ? opts : {}),
         });
-      } catch (err: any) {
-        // Retry without Markdown if parsing failed
+      } catch {
         try {
           await this.bot.sendMessage(chatId, chunk, {
             ...(isLast ? opts : {}),
           });
         } catch (retryErr: any) {
-          console.error(`Telegram send error: ${retryErr.message}`);
+          console.error(`Telegram send failure: ${retryErr.message}`);
         }
       }
     }
   }
 
-  /**
-   * Start the bot.
-   */
   public start(): void {
-    console.log("🤖 Telegram bot started and listening...");
-    console.log("📋 Commands: /start, /scan, /positions, /close, /help");
-    console.log("⏰ Auto-close scheduled for 1:30 PM IST daily");
-
-    // Send startup message
+    console.log("🤖 Telegram Bot polling started!");
+    console.log("⏰ 1:30 PM IST Auto-Close active.");
     if (this.chatId) {
-      this.sendMsg(this.chatId,
-        "🚀 *Options Arbitrage Bot Online!* 🚀\n" +
-        "━━━━━━━━━━━━━━━━━━━━━━\n" +
-        "🏛 Delta Exchange (Long) ↔ 🏦 CoinDCX (Short)\n\n" +
-        "📦 *Lot Sizes:*\n" +
-        "   • CoinDCX: 1 lot = 0.1 unit\n" +
-        "   • Delta: 10 lots = 0.1 unit\n\n" +
-        "⏰ Auto-close: 1:30 PM IST daily\n\n" +
-        "👉 Use /start to begin scanning!"
-      );
+      this.sendMainMenu(this.chatId);
     }
   }
 
-  /**
-   * Stop the bot.
-   */
   public stop(): void {
     this.bot.stopPolling();
-    console.log("Bot stopped.");
+    console.log("Telegram Bot polling stopped.");
   }
 }

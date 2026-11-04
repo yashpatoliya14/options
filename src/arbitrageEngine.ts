@@ -1,20 +1,29 @@
 /**
- * Arbitrage Engine.
- * Compares options chains across Delta Exchange and CoinDCX.
- * Strategy: BUY (Long) on Delta + SELL (Short) on CoinDCX.
- * Suggests trades where CoinDCX premium >= Delta premium.
+ * Arbitrage Engine (LIVE ONLY).
+ * Compares live options chains across Delta Exchange and CoinDCX.
+ * Strategy:
+ *  - LONG (BUY) on Delta Exchange (10 lots = 0.1 unit)
+ *  - SHORT (SELL) on CoinDCX (1 lot = 0.1 unit)
+ *  - Suggests strikes where CoinDCX premium >= Delta premium.
+ *  - Computes Live Net PnL and Live Wallet Balances.
  */
 
 import { Config, ASSETS, AssetConfig } from "./config";
 import { DeltaClient } from "./deltaClient";
 import { CoinDCXClient } from "./coindcxClient";
-import { ParsedOption, StrikeComparison, OptionChainResult, OptionType, TradeExecution } from "./types";
+import {
+  ParsedOption,
+  StrikeComparison,
+  OptionChainResult,
+  OptionType,
+  TradeExecution,
+  NetPnlReport,
+  CombinedWalletReport,
+} from "./types";
 
 export class ArbitrageEngine {
   public deltaClient: DeltaClient;
   public coindcxClient: CoinDCXClient;
-
-  // Track active trades
   public activeTrades: TradeExecution[] = [];
 
   constructor() {
@@ -23,7 +32,7 @@ export class ArbitrageEngine {
   }
 
   /**
-   * Get today and tomorrow's dates in IST (YYYY-MM-DD).
+   * Get today's and tomorrow's dates in IST (YYYY-MM-DD).
    */
   public getExpiryDates(): { today: string; tomorrow: string; dates: string[] } {
     const nowUtc = new Date();
@@ -46,17 +55,17 @@ export class ArbitrageEngine {
     const { dates } = this.getExpiryDates();
     const targetDates = expiryFilter ? [expiryFilter] : dates;
 
-    // Fetch spot price
+    // Fetch live spot price
     const spotPrice = await this.deltaClient.getSpotPrice(asset.deltaUnderlying);
-    if (spotPrice <= 0) throw new Error(`Could not fetch spot price for ${asset.symbol}`);
+    if (spotPrice <= 0) throw new Error(`Could not fetch live spot price for ${asset.symbol}`);
 
-    // Fetch options from both exchanges
+    // Fetch live options from both exchanges
     const [deltaOpts, coindcxOpts] = await Promise.all([
       this.deltaClient.getOptions(asset, targetDates),
       this.coindcxClient.getOptions(asset, targetDates),
     ]);
 
-    // Group by expiry date
+    // Group options by expiry date
     const expiryGroups = new Map<string, { delta: ParsedOption[]; coindcx: ParsedOption[] }>();
     for (const date of targetDates) {
       expiryGroups.set(date, { delta: [], coindcx: [] });
@@ -75,19 +84,17 @@ export class ArbitrageEngine {
     for (const [date, group] of expiryGroups) {
       if (group.delta.length === 0 && group.coindcx.length === 0) continue;
 
-      // Build strike maps
       const deltaMap = new Map<string, ParsedOption>();
       for (const o of group.delta) deltaMap.set(`${o.strike}_${o.optionType}`, o);
 
       const coindcxMap = new Map<string, ParsedOption>();
       for (const o of group.coindcx) coindcxMap.set(`${o.strike}_${o.optionType}`, o);
 
-      // Find common strikes
       const allStrikeSet = new Set<number>();
       for (const o of [...group.delta, ...group.coindcx]) allStrikeSet.add(o.strike);
       const allStrikes = Array.from(allStrikeSet).sort((a, b) => a - b);
 
-      // ATM strike
+      // Identify ATM Strike
       let atmStrike = 0;
       let minDiff = Infinity;
       for (const s of allStrikes) {
@@ -98,16 +105,18 @@ export class ArbitrageEngine {
         }
       }
 
-      // OTM calls (above ATM) and OTM puts (below ATM)
+      // OTM Calls (strikes > ATM) and OTM Puts (strikes < ATM)
       const otmCallStrikes = allStrikes.filter((s) => s > atmStrike).slice(0, Config.NUM_OTM_STRIKES);
-      const otmPutStrikes = allStrikes.filter((s) => s < atmStrike).sort((a, b) => b - a).slice(0, Config.NUM_OTM_STRIKES);
+      const otmPutStrikes = allStrikes
+        .filter((s) => s < atmStrike)
+        .sort((a, b) => b - a)
+        .slice(0, Config.NUM_OTM_STRIKES);
 
       const buildComparison = (strike: number, optType: OptionType, category: "ATM" | "OTM"): StrikeComparison | null => {
         const key = `${strike}_${optType}`;
         const dOpt = deltaMap.get(key);
         const cOpt = coindcxMap.get(key);
 
-        // Need at least one side
         if (!dOpt && !cOpt) return null;
 
         const deltaPrice = dOpt?.markPrice || 0;
@@ -115,8 +124,12 @@ export class ArbitrageEngine {
         const spreadUsd = Math.round((coindcxPrice - deltaPrice) * 100) / 100;
         const spreadPct = deltaPrice > 0 ? Math.round(((spreadUsd / deltaPrice) * 100) * 10) / 10 : 0;
 
-        // Suggestion: CoinDCX (short) premium >= Delta (long) premium
+        // Requirement: Suggestion when Short Premium (CoinDCX) >= Long Premium (Delta)
         const isSuggested = coindcxPrice >= deltaPrice && coindcxPrice > 0 && deltaPrice > 0;
+
+        // Lot sizing: 0.1 units (CoinDCX: 1 lot = 0.1, Delta: 10 lots = 0.1)
+        const potentialProfitUsd = Math.round(spreadUsd * asset.lotSizeUnits * 100) / 100;
+        const potentialProfitInr = Math.round(potentialProfitUsd * Config.USD_INR_RATE * 100) / 100;
 
         return {
           strike,
@@ -130,13 +143,18 @@ export class ArbitrageEngine {
           deltaIv: dOpt?.ivPct || 0,
           deltaSymbol: dOpt?.symbol || "",
           deltaProductId: dOpt?.productId,
+          deltaLots: asset.deltaLots,
           coindcxPrice,
           coindcxBid: cOpt?.bestBid || 0,
           coindcxAsk: cOpt?.bestAsk || 0,
           coindcxIv: cOpt?.ivPct || 0,
           coindcxSymbol: cOpt?.symbol || "",
+          coindcxLots: asset.coindcxLots,
+          underlyingUnits: asset.lotSizeUnits,
           spreadUsd,
           spreadPct,
+          potentialProfitUsd,
+          potentialProfitInr,
           isSuggested,
         };
       };
@@ -147,19 +165,16 @@ export class ArbitrageEngine {
       const otmPuts: StrikeComparison[] = [];
       const allComparisons: StrikeComparison[] = [];
 
-      // ATM
       const atmCall = buildComparison(atmStrike, "CALL", "ATM");
       const atmPut = buildComparison(atmStrike, "PUT", "ATM");
       if (atmCall) { atmCalls.push(atmCall); allComparisons.push(atmCall); }
       if (atmPut) { atmPuts.push(atmPut); allComparisons.push(atmPut); }
 
-      // OTM Calls
       for (const s of otmCallStrikes) {
         const comp = buildComparison(s, "CALL", "OTM");
         if (comp) { otmCalls.push(comp); allComparisons.push(comp); }
       }
 
-      // OTM Puts
       for (const s of otmPutStrikes) {
         const comp = buildComparison(s, "PUT", "OTM");
         if (comp) { otmPuts.push(comp); allComparisons.push(comp); }
@@ -188,9 +203,9 @@ export class ArbitrageEngine {
   }
 
   /**
-   * Execute an arbitrage trade:
-   * - BUY (Long) on Delta Exchange
-   * - SELL (Short) on CoinDCX
+   * Execute LIVE Arbitrage Trade:
+   *  - Delta Exchange: BUY (LONG) 10 lots (= 0.1 units)
+   *  - CoinDCX: SELL (SHORT) 1 lot (= 0.1 units)
    */
   public async executeTrade(
     assetKey: string,
@@ -218,15 +233,14 @@ export class ArbitrageEngine {
     };
 
     try {
-      // Execute both legs
       const [deltaResult, coindcxResult] = await Promise.all([
-        // Delta: BUY 10 lots (= 0.1 units)
+        // Delta LIVE order: BUY 10 lots
         this.deltaClient.placeBuyOrder(
           strike.deltaProductId!,
           strike.deltaSymbol,
           asset.deltaLots
         ),
-        // CoinDCX: SELL 1 lot (= 0.1 units)
+        // CoinDCX LIVE order: SELL 1 lot
         this.coindcxClient.placeSellOrder(
           strike.coindcxSymbol,
           asset.coindcxLots
@@ -255,7 +269,75 @@ export class ArbitrageEngine {
   }
 
   /**
-   * Close all positions on both exchanges.
+   * Fetch LIVE Net PnL from open positions across both exchanges.
+   */
+  public async getLiveNetPnl(): Promise<NetPnlReport> {
+    const [deltaPositions, coindcxPositions] = await Promise.all([
+      this.deltaClient.getOpenPositions(),
+      this.coindcxClient.getOpenPositions(),
+    ]);
+
+    let deltaUnrealizedUsd = 0;
+    for (const p of deltaPositions) {
+      deltaUnrealizedUsd += p.unrealizedPnlUsd;
+    }
+
+    let coindcxUnrealizedUsd = 0;
+    for (const p of coindcxPositions) {
+      coindcxUnrealizedUsd += p.unrealizedPnlUsd;
+    }
+
+    const totalUnrealizedUsd = Math.round((deltaUnrealizedUsd + coindcxUnrealizedUsd) * 100) / 100;
+    const totalUnrealizedInr = Math.round(totalUnrealizedUsd * Config.USD_INR_RATE * 100) / 100;
+
+    const deltaUnrealizedInr = Math.round(deltaUnrealizedUsd * Config.USD_INR_RATE * 100) / 100;
+    const coindcxUnrealizedInr = Math.round(coindcxUnrealizedUsd * Config.USD_INR_RATE * 100) / 100;
+
+    const totalPositionsCount = deltaPositions.length + coindcxPositions.length;
+    const isFlat = totalPositionsCount === 0;
+
+    return {
+      timestamp: new Date(),
+      deltaPositions,
+      coindcxPositions,
+      deltaUnrealizedUsd: Math.round(deltaUnrealizedUsd * 100) / 100,
+      deltaUnrealizedInr,
+      coindcxUnrealizedUsd: Math.round(coindcxUnrealizedUsd * 100) / 100,
+      coindcxUnrealizedInr,
+      totalUnrealizedUsd,
+      totalUnrealizedInr,
+      isFlat,
+      totalPositionsCount,
+    };
+  }
+
+  /**
+   * Fetch LIVE Wallet Balances across both exchanges.
+   */
+  public async getLiveWalletBalances(): Promise<CombinedWalletReport> {
+    const [delta, coindcx] = await Promise.all([
+      this.deltaClient.getWalletBalance(),
+      this.coindcxClient.getWalletBalance(),
+    ]);
+
+    const totalBalanceUsd = Math.round((delta.balanceUsd + coindcx.balanceUsd) * 100) / 100;
+    const totalBalanceInr = Math.round(totalBalanceUsd * Config.USD_INR_RATE * 100) / 100;
+    const totalAvailableUsd = Math.round((delta.availableUsd + coindcx.availableUsd) * 100) / 100;
+    const totalAvailableInr = Math.round(totalAvailableUsd * Config.USD_INR_RATE * 100) / 100;
+
+    return {
+      timestamp: new Date(),
+      delta,
+      coindcx,
+      totalBalanceUsd,
+      totalBalanceInr,
+      totalAvailableUsd,
+      totalAvailableInr,
+    };
+  }
+
+  /**
+   * Close ALL positions on both exchanges.
    */
   public async closeAllPositions(): Promise<{
     delta: { closedCount: number; details: string[] };
@@ -266,7 +348,6 @@ export class ArbitrageEngine {
       this.coindcxClient.closeAllPositions(),
     ]);
 
-    // Mark active trades as closed
     for (const t of this.activeTrades) {
       if (t.status === "filled" || t.status === "partial") {
         t.status = "closed";
