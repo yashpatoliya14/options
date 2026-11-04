@@ -132,17 +132,21 @@ export class CoinDCXClient {
         const currencies: { symbol: string; total: number; available: number }[] = [];
 
         for (const item of resp.data) {
-          const curr = (item.currency || item.currency_short_name || "").toUpperCase();
-          const bal = parseFloat(item.balance || "0");
-          const locked = parseFloat(item.locked_balance || "0");
-          const avail = Math.max(0, bal - locked);
+          const curr = (item.currency || item.currency_short_name || item.coin || "").toUpperCase();
+          const bal = parseFloat(item.balance || item.total || item.total_balance || "0");
+          const locked = parseFloat(item.locked_balance || item.locked || item.margin || "0");
+          const avail = item.available_balance !== undefined
+            ? parseFloat(item.available_balance)
+            : item.available !== undefined
+            ? parseFloat(item.available)
+            : Math.max(0, bal - locked);
 
           if (bal === 0 && avail === 0) continue;
 
           currencies.push({ symbol: curr, total: bal, available: avail });
 
           if (curr === "INR") {
-            // Primary INR margin for CoinDCX Options
+            // Primary INR margin for CoinDCX Options Wallet
             totalInr += bal;
             availableInr += avail;
             lockedInr += locked;
