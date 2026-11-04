@@ -5,149 +5,51 @@
  *  - Delta Exchange (LONG / BUY): 10 lots = 0.1 unit
  *  - CoinDCX (SHORT / SELL): 1 lot = 0.1 unit
  *
- * Features:
- *  - Interactive inline buttons to scan and execute trades
- *  - Net PnL tracking for active positions on both exchanges
- *  - Live wallet balance display
- *  - Suggestions where Short premium (CoinDCX) >= Long premium (Delta)
+ * Capabilities:
+ *  - Interactive inline buttons to scan and execute trades live
+ *  - Live Net PnL tracking for positions on both exchanges
+ *  - Live wallet balances (USDT, INR, Equity, Available Margin)
+ *  - Short Premium >= Long Premium suggestion engine
  *  - Daily automatic position close at 1:30 PM IST
  */
 
-import TelegramBot = require("node-telegram-bot-api");
+import axios, { AxiosInstance } from "axios";
 import cron from "node-cron";
 import { Config, ASSETS, AssetConfig } from "./config";
 import { ArbitrageEngine } from "./arbitrageEngine";
 import { StrikeComparison, OptionChainResult, NetPnlReport, CombinedWalletReport } from "./types";
 
+export interface InlineKeyboardButton {
+  text: string;
+  callback_data?: string;
+  url?: string;
+}
+
 export class ArbTelegramBot {
-  private bot: TelegramBot;
+  private token: string;
+  private defaultChatId: string;
+  private apiUrl: string;
+  private http: AxiosInstance;
   private engine: ArbitrageEngine;
-  private chatId: string;
+  private isRunning = false;
+  private lastUpdateId = 0;
 
-  constructor() {
-    this.engine = new ArbitrageEngine();
-    this.chatId = Config.TELEGRAM_CHAT_ID;
+  constructor(engine?: ArbitrageEngine, token?: string, defaultChatId?: string) {
+    this.token = token || Config.TELEGRAM_BOT_TOKEN;
+    this.defaultChatId = defaultChatId || Config.TELEGRAM_CHAT_ID;
+    this.apiUrl = this.token ? `https://api.telegram.org/bot${this.token}` : "";
+    this.http = axios.create({ timeout: 30000 });
+    this.engine = engine || new ArbitrageEngine();
 
-    this.bot = new TelegramBot(Config.TELEGRAM_BOT_TOKEN, { polling: true });
-    this.setupHandlers();
     this.setupAutoClose();
   }
 
   /**
-   * Setup command and callback query handlers.
-   */
-  private setupHandlers(): void {
-    // /start command
-    this.bot.onText(/\/start/, (msg: TelegramBot.Message) => {
-      this.sendMainMenu(msg.chat.id);
-    });
-
-    // /menu command
-    this.bot.onText(/\/menu/, (msg: TelegramBot.Message) => {
-      this.sendMainMenu(msg.chat.id);
-    });
-
-    // /pnl command - Live Net PnL
-    this.bot.onText(/\/pnl/, async (msg: TelegramBot.Message) => {
-      await this.handleShowNetPnl(msg.chat.id);
-    });
-
-    // /wallet or /balance command - Live Balances
-    this.bot.onText(/\/(wallet|balance)/, async (msg: TelegramBot.Message) => {
-      await this.handleShowWallet(msg.chat.id);
-    });
-
-    // /close command - Close all positions
-    this.bot.onText(/\/close/, async (msg: TelegramBot.Message) => {
-      await this.handleCloseAll(msg.chat.id);
-    });
-
-    // /positions command
-    this.bot.onText(/\/positions/, async (msg: TelegramBot.Message) => {
-      await this.handleShowNetPnl(msg.chat.id);
-    });
-
-    // /help command
-    this.bot.onText(/\/help/, (msg: TelegramBot.Message) => {
-      this.showHelp(msg.chat.id);
-    });
-
-    // Text messages handler
-    this.bot.on("message", async (msg: TelegramBot.Message) => {
-      if (!msg.text || msg.text.startsWith("/")) return;
-      const text = msg.text.trim().toLowerCase();
-
-      if (text.includes("pnl") || text.includes("profit") || text.includes("net")) {
-        await this.handleShowNetPnl(msg.chat.id);
-      } else if (text.includes("wallet") || text.includes("balance")) {
-        await this.handleShowWallet(msg.chat.id);
-      } else if (text === "close" || text === "close all") {
-        await this.handleCloseAll(msg.chat.id);
-      } else if (text.includes("btc")) {
-        await this.showExpirySelection(msg.chat.id, "BTC");
-      } else if (text.includes("eth")) {
-        await this.showExpirySelection(msg.chat.id, "ETH");
-      } else if (text.includes("xaut") || text.includes("gold")) {
-        await this.showExpirySelection(msg.chat.id, "XAUTUSDT");
-      } else if (text.includes("menu") || text.includes("scan") || text.includes("options")) {
-        this.sendMainMenu(msg.chat.id);
-      } else {
-        this.sendMainMenu(msg.chat.id);
-      }
-    });
-
-    // Inline button callback query handler
-    this.bot.on("callback_query", async (query: TelegramBot.CallbackQuery) => {
-      if (!query.data || !query.message) return;
-      const chatId = query.message.chat.id;
-      const data = query.data;
-
-      try {
-        if (data.startsWith("asset_")) {
-          const assetKey = data.replace("asset_", "");
-          await this.bot.answerCallbackQuery(query.id, { text: `Selected ${assetKey}` });
-          await this.showExpirySelection(chatId, assetKey);
-        } else if (data.startsWith("expiry_")) {
-          // Format: expiry_BTC_2026-11-04
-          const parts = data.replace("expiry_", "").split("_");
-          const assetKey = parts[0];
-          const expiryDate = parts.slice(1).join("-");
-          await this.bot.answerCallbackQuery(query.id, { text: `Scanning ${assetKey} options...` });
-          await this.handleScanOptions(chatId, assetKey, expiryDate);
-        } else if (data.startsWith("exec_")) {
-          // Format: exec_BTC_96000_CALL_2026-11-04
-          await this.bot.answerCallbackQuery(query.id, { text: "⚡ Triggering Live Orders..." });
-          await this.handleExecuteTrade(chatId, data);
-        } else if (data === "view_pnl") {
-          await this.bot.answerCallbackQuery(query.id, { text: "📊 Fetching Live Net PnL..." });
-          await this.handleShowNetPnl(chatId);
-        } else if (data === "view_wallet") {
-          await this.bot.answerCallbackQuery(query.id, { text: "💼 Fetching Live Wallets..." });
-          await this.handleShowWallet(chatId);
-        } else if (data === "close_all_confirm") {
-          await this.bot.answerCallbackQuery(query.id, { text: "🛑 Closing ALL open positions..." });
-          await this.handleCloseAll(chatId);
-        } else if (data === "main_menu") {
-          await this.bot.answerCallbackQuery(query.id);
-          this.sendMainMenu(chatId);
-        } else {
-          await this.bot.answerCallbackQuery(query.id);
-        }
-      } catch (err: any) {
-        console.error(`Callback error: ${err.message}`);
-        await this.bot.answerCallbackQuery(query.id, { text: `Error: ${err.message}` });
-        await this.sendMsg(chatId, `❌ Error: ${err.message}`);
-      }
-    });
-  }
-
-  /**
-   * Schedule automatic position close at 1:30 PM IST daily.
-   * 1:30 PM IST = 08:00 UTC.
+   * Schedule automatic position close at 1:30 PM IST daily (08:00 UTC).
    */
   private setupAutoClose(): void {
     cron.schedule("0 8 * * *", async () => {
-      console.log("⏰ 1:30 PM IST CUTOFF: Auto-closing all open positions across Delta & CoinDCX...");
+      console.log("⏰ 1:30 PM IST CUTOFF: Executing automated close of all open positions...");
       await this.autoCloseAllPositions();
     }, { timezone: "UTC" });
 
@@ -157,16 +59,16 @@ export class ArbTelegramBot {
   /**
    * Auto-close all positions and notify via Telegram.
    */
-  private async autoCloseAllPositions(): Promise<void> {
-    const chatId = this.chatId;
+  public async autoCloseAllPositions(): Promise<void> {
+    const chatId = this.defaultChatId;
     if (!chatId) return;
 
     try {
-      await this.sendMsg(
-        chatId,
+      await this.sendMessage(
         "🚨 *AUTO-CLOSE 1:30 PM IST* 🚨\n" +
         "━━━━━━━━━━━━━━━━━━━━━━\n" +
-        "⏰ Daily cutoff reached! Executing market orders to close ALL positions on Delta & CoinDCX..."
+        "⏰ Daily 1:30 PM cutoff reached! Closing ALL open positions across Delta Exchange & CoinDCX...",
+        chatId
       );
 
       const result = await this.engine.closeAllPositions();
@@ -180,7 +82,7 @@ export class ArbTelegramBot {
       if (result.delta.details.length > 0) {
         lines.push(...result.delta.details.map((d) => `   • ${d}`));
       } else {
-        lines.push("   • No active positions found.");
+        lines.push("   • No open positions on Delta.");
       }
 
       lines.push("");
@@ -188,16 +90,79 @@ export class ArbTelegramBot {
       if (result.coindcx.details.length > 0) {
         lines.push(...result.coindcx.details.map((d) => `   • ${d}`));
       } else {
-        lines.push("   • No active positions found.");
+        lines.push("   • No open positions on CoinDCX.");
       }
 
-      lines.push("");
-      lines.push("✅ Both legs flat! Ready for next trade cycle.");
-      lines.push("👉 Click /start to scan next-day opportunities.");
+      lines.push("\n✅ Both legs flat! Ready for next trade cycle.");
+      lines.push("👉 Click /start to scan next-day arbitrage.");
 
-      await this.sendMsg(chatId, lines.join("\n"));
+      await this.sendMessage(lines.join("\n"), chatId);
     } catch (err: any) {
-      await this.sendMsg(chatId, `❌ Auto-close error: ${err.message}`);
+      await this.sendMessage(`❌ Auto-close error: ${err.message}`, chatId);
+    }
+  }
+
+  /**
+   * Send a formatted Telegram message with chunking and optional inline keyboard.
+   */
+  public async sendMessage(
+    text: string,
+    chatId?: string,
+    inlineKeyboard?: InlineKeyboardButton[][]
+  ): Promise<boolean> {
+    const targetChat = chatId || this.defaultChatId;
+    if (!this.apiUrl || !targetChat) {
+      console.log(`[Telegram Log] ${text.substring(0, 150)}...`);
+      return false;
+    }
+
+    const chunkSize = 3900;
+    let success = true;
+
+    for (let i = 0; i < text.length; i += chunkSize) {
+      const chunk = text.substring(i, i + chunkSize);
+      const isLastChunk = i + chunkSize >= text.length;
+
+      const payload: any = {
+        chat_id: targetChat,
+        text: chunk,
+        parse_mode: "Markdown",
+      };
+
+      if (isLastChunk && inlineKeyboard && inlineKeyboard.length > 0) {
+        payload.reply_markup = { inline_keyboard: inlineKeyboard };
+      }
+
+      try {
+        await this.http.post(`${this.apiUrl}/sendMessage`, payload);
+      } catch (err: any) {
+        // Retry without Markdown if syntax failed
+        try {
+          delete payload.parse_mode;
+          await this.http.post(`${this.apiUrl}/sendMessage`, payload);
+        } catch (retryErr: any) {
+          console.error(`Telegram send error: ${retryErr.message}`);
+          success = false;
+        }
+      }
+    }
+
+    return success;
+  }
+
+  /**
+   * Answer a callback query from an inline button press.
+   */
+  private async answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void> {
+    if (!this.apiUrl) return;
+    try {
+      await this.http.post(`${this.apiUrl}/answerCallbackQuery`, {
+        callback_query_id: callbackQueryId,
+        text: text || "",
+        show_alert: false,
+      });
+    } catch {
+      // Ignore callback query ack errors
     }
   }
 
@@ -208,8 +173,8 @@ export class ArbTelegramBot {
   /**
    * Main Menu: Asset selection, Wallet, Net PnL, Close All.
    */
-  public sendMainMenu(chatId: number | string): void {
-    const keyboard: TelegramBot.InlineKeyboardButton[][] = [
+  public async sendMainMenu(chatId: string): Promise<void> {
+    const keyboard: InlineKeyboardButton[][] = [
       [
         { text: "₿ BTC Options", callback_data: "asset_BTC" },
         { text: "⟠ ETH Options", callback_data: "asset_ETH" },
@@ -231,19 +196,19 @@ export class ArbTelegramBot {
       "🏦 *CoinDCX:* SHORT (SELL 1 lot = 0.1)\n\n" +
       "🎯 *Strategy:* Short CoinDCX (higher premium) & Long Delta (lower premium)\n" +
       "⏰ *Auto-Close:* 1:30 PM IST daily\n\n" +
-      "Select an action or asset below:";
+      "Select an asset to scan or choose an action below:";
 
-    this.sendMsg(chatId, text, { reply_markup: { inline_keyboard: keyboard } });
+    await this.sendMessage(text, chatId, keyboard);
   }
 
   /**
    * Expiry Selection: Today's Expiry vs Tomorrow's Expiry.
    */
-  private async showExpirySelection(chatId: number | string, assetKey: string): Promise<void> {
+  public async showExpirySelection(chatId: string, assetKey: string): Promise<void> {
     const { today, tomorrow } = this.engine.getExpiryDates();
     const asset = ASSETS[assetKey];
 
-    const keyboard: TelegramBot.InlineKeyboardButton[][] = [
+    const keyboard: InlineKeyboardButton[][] = [
       [
         { text: `📅 Today (${today})`, callback_data: `expiry_${assetKey}_${today}` },
         { text: `📅 Tomorrow (${tomorrow})`, callback_data: `expiry_${assetKey}_${tomorrow}` },
@@ -256,38 +221,34 @@ export class ArbTelegramBot {
     const text =
       `🪙 *${asset.name} (${asset.symbol}) Options*\n` +
       `━━━━━━━━━━━━━━━━━━━━━━\n` +
-      `📦 *Contract Sizing:*\n` +
+      `📦 *Contract Sizing (0.1 units):*\n` +
       `   • CoinDCX: *${asset.coindcxLots} lot* = ${asset.lotSizeUnits} ${asset.symbol}\n` +
       `   • Delta: *${asset.deltaLots} lots* = ${asset.lotSizeUnits} ${asset.symbol}\n\n` +
-      `Choose expiry date:`;
+      `Select expiry date to scan:`;
 
-    await this.sendMsg(chatId, text, { reply_markup: { inline_keyboard: keyboard } });
+    await this.sendMessage(text, chatId, keyboard);
   }
 
   /**
    * Options Scanner Screen: Lists ATM & OTM Strikes with individual Execute buttons.
    */
-  private async handleScanOptions(
-    chatId: number | string,
-    assetKey: string,
-    expiryDate: string
-  ): Promise<void> {
+  public async handleScanOptions(chatId: string, assetKey: string, expiryDate: string): Promise<void> {
     const asset = ASSETS[assetKey];
 
-    await this.sendMsg(
-      chatId,
+    await this.sendMessage(
       `🔍 *Scanning ${asset.symbol} live options for ${expiryDate}...*\n` +
-      `_Connecting to Delta Exchange and CoinDCX..._`
+      `_Connecting to Delta Exchange and CoinDCX live books..._`,
+      chatId
     );
 
     try {
       const results = await this.engine.scanOptions(assetKey, expiryDate);
 
       if (results.length === 0 || results[0].allStrikes.length === 0) {
-        await this.sendMsg(
-          chatId,
+        await this.sendMessage(
           `⚠️ No active options contracts found for *${asset.symbol}* expiring *${expiryDate}*.\n` +
-          `Try selecting another expiry or checking market hours.`
+          `Try selecting another expiry or checking market hours.`,
+          chatId
         );
         return;
       }
@@ -340,8 +301,8 @@ export class ArbTelegramBot {
 
       text += `👉 *Tap any button below to instantly execute the trade live:*`;
 
-      // ── Build Clickable Execute Buttons ──
-      const keyboard: TelegramBot.InlineKeyboardButton[][] = [];
+      // ── Clickable Execute Buttons ──
+      const keyboard: InlineKeyboardButton[][] = [];
 
       for (const s of chain.allStrikes) {
         const tag = s.isSuggested ? "🟢 ARB" : "⚪";
@@ -350,7 +311,7 @@ export class ArbTelegramBot {
         keyboard.push([{ text: label, callback_data: cbData }]);
       }
 
-      // Action buttons
+      // Action navigation buttons
       keyboard.push([
         { text: "📈 View Net PnL", callback_data: "view_pnl" },
         { text: "💼 View Wallet", callback_data: "view_wallet" },
@@ -360,9 +321,9 @@ export class ArbTelegramBot {
         { text: "🔙 Main Menu", callback_data: "main_menu" },
       ]);
 
-      await this.sendMsg(chatId, text, { reply_markup: { inline_keyboard: keyboard } });
+      await this.sendMessage(text, chatId, keyboard);
     } catch (err: any) {
-      await this.sendMsg(chatId, `❌ Scan error: ${err.message}`);
+      await this.sendMessage(`❌ Scan error: ${err.message}`, chatId);
     }
   }
 
@@ -384,11 +345,11 @@ export class ArbTelegramBot {
   /**
    * Execute Trade Handler: Fired when user clicks any strike button!
    */
-  private async handleExecuteTrade(chatId: number | string, callbackData: string): Promise<void> {
+  public async handleExecuteTrade(chatId: string, callbackData: string): Promise<void> {
     // Format: exec_BTC_96000_CALL_2026-11-04
     const parts = callbackData.replace("exec_", "").split("_");
     if (parts.length < 4) {
-      await this.sendMsg(chatId, "❌ Invalid execution parameters");
+      await this.sendMessage("❌ Invalid execution parameters", chatId);
       return;
     }
 
@@ -399,12 +360,11 @@ export class ArbTelegramBot {
 
     const asset = ASSETS[assetKey];
     if (!asset) {
-      await this.sendMsg(chatId, `❌ Unknown asset: ${assetKey}`);
+      await this.sendMessage(`❌ Unknown asset: ${assetKey}`, chatId);
       return;
     }
 
-    await this.sendMsg(
-      chatId,
+    await this.sendMessage(
       `⚡ *EXECUTING LIVE ARBITRAGE TRADE...*\n` +
       `━━━━━━━━━━━━━━━━━━━━━━\n` +
       `🪙 *${asset.symbol}* | Strike: *${strikeNum.toLocaleString()} ${optionType}*\n` +
@@ -412,14 +372,15 @@ export class ArbTelegramBot {
       `🏛 *Delta Exchange:* BUY ${asset.deltaLots} lots (LONG)\n` +
       `🏦 *CoinDCX:* SELL ${asset.coindcxLots} lot(s) (SHORT)\n` +
       `📦 Total Size: *${asset.lotSizeUnits} ${asset.symbol}*\n\n` +
-      `_Dispatching live signed API orders..._`
+      `_Dispatching live signed API orders to exchanges..._`,
+      chatId
     );
 
     try {
       const results = await this.engine.scanOptions(assetKey, expiryDate);
       const chain = results[0];
       if (!chain) {
-        await this.sendMsg(chatId, `❌ Could not refresh options pricing for ${expiryDate}`);
+        await this.sendMessage(`❌ Could not refresh options pricing for ${expiryDate}`, chatId);
         return;
       }
 
@@ -428,7 +389,7 @@ export class ArbTelegramBot {
       );
 
       if (!strikeData) {
-        await this.sendMsg(chatId, `❌ Strike ${strikeNum} ${optionType} not found in live books`);
+        await this.sendMessage(`❌ Strike ${strikeNum} ${optionType} not found in live books`, chatId);
         return;
       }
 
@@ -457,7 +418,7 @@ export class ArbTelegramBot {
 
       lines.push(`\n⏰ *Auto-Close:* Scheduled for 1:30 PM IST daily.`);
 
-      const keyboard: TelegramBot.InlineKeyboardButton[][] = [
+      const keyboard: InlineKeyboardButton[][] = [
         [
           { text: "📈 View Live Net PnL", callback_data: "view_pnl" },
           { text: "💼 View Wallet", callback_data: "view_wallet" },
@@ -468,17 +429,17 @@ export class ArbTelegramBot {
         ],
       ];
 
-      await this.sendMsg(chatId, lines.join("\n"), { reply_markup: { inline_keyboard: keyboard } });
+      await this.sendMessage(lines.join("\n"), chatId, keyboard);
     } catch (err: any) {
-      await this.sendMsg(chatId, `❌ Execution failed: ${err.message}`);
+      await this.sendMessage(`❌ Execution failed: ${err.message}`, chatId);
     }
   }
 
   /**
    * Live Net PnL & Open Positions Screen.
    */
-  public async handleShowNetPnl(chatId: number | string): Promise<void> {
-    await this.sendMsg(chatId, "📊 *Fetching Live Net PnL & Positions from Delta & CoinDCX...*");
+  public async handleShowNetPnl(chatId: string): Promise<void> {
+    await this.sendMessage("📊 *Fetching Live Net PnL & Positions from Delta & CoinDCX...*", chatId);
 
     try {
       const pnlReport: NetPnlReport = await this.engine.getLiveNetPnl();
@@ -527,9 +488,9 @@ export class ArbTelegramBot {
       lines.push(
         `\n📊 *Status:* ${pnlReport.isFlat ? "🟢 FLAT (Ready for entry)" : "🟡 ACTIVE ARBITRAGE IN PROGRESS"}`
       );
-      lines.push(`⏰ *Auto-Close:* All positions close at 1:30 PM IST.`);
+      lines.push(`⏰ *Auto-Close:* All positions automatically close at 1:30 PM IST.`);
 
-      const keyboard: TelegramBot.InlineKeyboardButton[][] = [
+      const keyboard: InlineKeyboardButton[][] = [
         [
           { text: "🔄 Refresh Net PnL", callback_data: "view_pnl" },
           { text: "🛑 Close All Positions", callback_data: "close_all_confirm" },
@@ -540,17 +501,17 @@ export class ArbTelegramBot {
         ],
       ];
 
-      await this.sendMsg(chatId, lines.join("\n"), { reply_markup: { inline_keyboard: keyboard } });
+      await this.sendMessage(lines.join("\n"), chatId, keyboard);
     } catch (err: any) {
-      await this.sendMsg(chatId, `❌ Error fetching Net PnL: ${err.message}`);
+      await this.sendMessage(`❌ Error fetching Net PnL: ${err.message}`, chatId);
     }
   }
 
   /**
    * Live Wallet Balances Screen.
    */
-  public async handleShowWallet(chatId: number | string): Promise<void> {
-    await this.sendMsg(chatId, "💼 *Fetching Live Wallet Balances from Delta & CoinDCX...*");
+  public async handleShowWallet(chatId: string): Promise<void> {
+    await this.sendMessage("💼 *Fetching Live Wallet Balances from Delta & CoinDCX...*", chatId);
 
     try {
       const report: CombinedWalletReport = await this.engine.getLiveWalletBalances();
@@ -558,12 +519,12 @@ export class ArbTelegramBot {
       const lines = [
         `💼 *LIVE WALLET BALANCES & MARGIN*`,
         `━━━━━━━━━━━━━━━━━━━━━━`,
-        `💰 *Total Equity:* *$${report.totalBalanceUsd.toLocaleString("en-US", { minimumFractionDigits: 2 })}* (₹${report.totalBalanceInr.toLocaleString("en-IN")})`,
+        `💰 *Total Combined Equity:* *$${report.totalBalanceUsd.toLocaleString("en-US", { minimumFractionDigits: 2 })}* (₹${report.totalBalanceInr.toLocaleString("en-IN")})`,
         `🛡 *Available Margin:* *$${report.totalAvailableUsd.toLocaleString("en-US", { minimumFractionDigits: 2 })}* (₹${report.totalAvailableInr.toLocaleString("en-IN")})`,
         `━━━━━━━━━━━━━━━━━━━━━━\n`,
         `🏛 *Delta Exchange (Live):*`,
-        `   • Total: *$${report.delta.balanceUsd.toFixed(2)}* (₹${report.delta.balanceInr.toLocaleString("en-IN")})`,
-        `   • Available: *$${report.delta.availableUsd.toFixed(2)}*`,
+        `   • Total Balance: *$${report.delta.balanceUsd.toFixed(2)}* (₹${report.delta.balanceInr.toLocaleString("en-IN")})`,
+        `   • Available Margin: *$${report.delta.availableUsd.toFixed(2)}*`,
       ];
 
       if (report.delta.currencies.length > 0) {
@@ -577,9 +538,9 @@ export class ArbTelegramBot {
 
       lines.push(`\n🏦 *CoinDCX (Live):*`);
       lines.push(
-        `   • Total: *$${report.coindcx.balanceUsd.toFixed(2)}* (₹${report.coindcx.balanceInr.toLocaleString("en-IN")})`
+        `   • Total Balance: *$${report.coindcx.balanceUsd.toFixed(2)}* (₹${report.coindcx.balanceInr.toLocaleString("en-IN")})`
       );
-      lines.push(`   • Available: *$${report.coindcx.availableUsd.toFixed(2)}*`);
+      lines.push(`   • Available Margin: *$${report.coindcx.availableUsd.toFixed(2)}*`);
 
       if (report.coindcx.currencies.length > 0) {
         for (const c of report.coindcx.currencies) {
@@ -590,7 +551,7 @@ export class ArbTelegramBot {
         lines.push(`   • ⚠️ Status: ${report.coindcx.error}`);
       }
 
-      lines.push(`\n📦 *TRADE LOT REQUIREMENT:*`);
+      lines.push(`\n📦 *TRADE LOT SIZING:*`);
       lines.push(`   • 1 Trade = 0.1 BTC / ETH / XAUT`);
       lines.push(`   • Delta: 10 lots | CoinDCX: 1 lot`);
 
@@ -601,7 +562,7 @@ export class ArbTelegramBot {
         lines.push(`   • Status: ⚠️ *Ensure both accounts hold sufficient margin before trading*`);
       }
 
-      const keyboard: TelegramBot.InlineKeyboardButton[][] = [
+      const keyboard: InlineKeyboardButton[][] = [
         [
           { text: "🔄 Refresh Wallet", callback_data: "view_wallet" },
           { text: "📈 View Net PnL", callback_data: "view_pnl" },
@@ -616,20 +577,20 @@ export class ArbTelegramBot {
         ],
       ];
 
-      await this.sendMsg(chatId, lines.join("\n"), { reply_markup: { inline_keyboard: keyboard } });
+      await this.sendMessage(lines.join("\n"), chatId, keyboard);
     } catch (err: any) {
-      await this.sendMsg(chatId, `❌ Error checking wallet: ${err.message}`);
+      await this.sendMessage(`❌ Error checking wallet: ${err.message}`, chatId);
     }
   }
 
   /**
    * Close All Open Positions Handler.
    */
-  public async handleCloseAll(chatId: number | string): Promise<void> {
-    await this.sendMsg(
-      chatId,
+  public async handleCloseAll(chatId: string): Promise<void> {
+    await this.sendMessage(
       "🚨 *CLOSING ALL POSITIONS LIVE ON DELTA & COINDCX...*\n" +
-      "_Submitting market orders to flatten both exchange accounts..._"
+      "_Submitting market orders to flatten both exchange accounts..._",
+      chatId
     );
 
     try {
@@ -657,23 +618,23 @@ export class ArbTelegramBot {
 
       lines.push("\n✅ Both legs executed! Send /pnl or tap below to verify flat state.");
 
-      const keyboard: TelegramBot.InlineKeyboardButton[][] = [
+      const keyboard: InlineKeyboardButton[][] = [
         [
           { text: "📈 Verify Net PnL", callback_data: "view_pnl" },
           { text: "🔙 Main Menu", callback_data: "main_menu" },
         ],
       ];
 
-      await this.sendMsg(chatId, lines.join("\n"), { reply_markup: { inline_keyboard: keyboard } });
+      await this.sendMessage(lines.join("\n"), chatId, keyboard);
     } catch (err: any) {
-      await this.sendMsg(chatId, `❌ Error closing positions: ${err.message}`);
+      await this.sendMessage(`❌ Error closing positions: ${err.message}`, chatId);
     }
   }
 
   /**
    * Help Message.
    */
-  private showHelp(chatId: number | string): void {
+  public async showHelp(chatId: string): Promise<void> {
     const text = [
       "🤖 *OPTIONS ARBITRAGE BOT COMMANDS*",
       "━━━━━━━━━━━━━━━━━━━━━━",
@@ -692,54 +653,133 @@ export class ArbTelegramBot {
       "⏰ *AUTO-CLOSE:* 1:30 PM IST daily",
     ].join("\n");
 
-    this.sendMsg(chatId, text);
+    await this.sendMessage(text, chatId);
   }
 
-  // ─────────────────────────────────────────────────────────────
-  // UTILITY METHODS
-  // ─────────────────────────────────────────────────────────────
+  /**
+   * Process incoming Telegram text command or action.
+   */
+  public async processCommand(text: string, userChatId: string): Promise<void> {
+    const raw = text.trim().toLowerCase();
+
+    if (raw === "/start" || raw === "/menu" || raw === "menu") {
+      await this.sendMainMenu(userChatId);
+    } else if (raw.includes("pnl") || raw.includes("profit") || raw.includes("position")) {
+      await this.handleShowNetPnl(userChatId);
+    } else if (raw.includes("wallet") || raw.includes("balance")) {
+      await this.handleShowWallet(userChatId);
+    } else if (raw === "/close" || raw === "close" || raw === "close all") {
+      await this.handleCloseAll(userChatId);
+    } else if (raw.includes("btc")) {
+      await this.showExpirySelection(userChatId, "BTC");
+    } else if (raw.includes("eth")) {
+      await this.showExpirySelection(userChatId, "ETH");
+    } else if (raw.includes("xaut") || raw.includes("gold")) {
+      await this.showExpirySelection(userChatId, "XAUTUSDT");
+    } else if (raw.includes("help")) {
+      await this.showHelp(userChatId);
+    } else {
+      await this.sendMainMenu(userChatId);
+    }
+  }
 
   /**
-   * Send message with automatic chunking.
+   * Process incoming callback query from inline buttons.
    */
-  private async sendMsg(
-    chatId: number | string,
-    text: string,
-    opts?: TelegramBot.SendMessageOptions
-  ): Promise<void> {
-    const chunkSize = 3900;
+  public async processCallbackQuery(callbackQuery: any): Promise<void> {
+    const queryId = callbackQuery.id;
+    const data: string = callbackQuery.data || "";
+    const chatId = callbackQuery.message?.chat?.id?.toString() || this.defaultChatId;
 
-    for (let i = 0; i < text.length; i += chunkSize) {
-      const chunk = text.substring(i, i + chunkSize);
-      const isLast = i + chunkSize >= text.length;
+    try {
+      if (data.startsWith("asset_")) {
+        const assetKey = data.replace("asset_", "");
+        await this.answerCallbackQuery(queryId, `Selected ${assetKey}`);
+        await this.showExpirySelection(chatId, assetKey);
+      } else if (data.startsWith("expiry_")) {
+        const parts = data.replace("expiry_", "").split("_");
+        const assetKey = parts[0];
+        const expiryDate = parts.slice(1).join("-");
+        await this.answerCallbackQuery(queryId, `Scanning ${assetKey}...`);
+        await this.handleScanOptions(chatId, assetKey, expiryDate);
+      } else if (data.startsWith("exec_")) {
+        await this.answerCallbackQuery(queryId, "⚡ Firing live order...");
+        await this.handleExecuteTrade(chatId, data);
+      } else if (data === "view_pnl") {
+        await this.answerCallbackQuery(queryId, "📊 Fetching Net PnL...");
+        await this.handleShowNetPnl(chatId);
+      } else if (data === "view_wallet") {
+        await this.answerCallbackQuery(queryId, "💼 Fetching Wallet...");
+        await this.handleShowWallet(chatId);
+      } else if (data === "close_all_confirm") {
+        await this.answerCallbackQuery(queryId, "🛑 Closing all positions...");
+        await this.handleCloseAll(chatId);
+      } else if (data === "main_menu") {
+        await this.answerCallbackQuery(queryId);
+        await this.sendMainMenu(chatId);
+      } else {
+        await this.answerCallbackQuery(queryId);
+      }
+    } catch (err: any) {
+      console.error(`Callback error: ${err.message}`);
+      await this.answerCallbackQuery(queryId, `Error: ${err.message}`);
+      await this.sendMessage(`❌ Error: ${err.message}`, chatId);
+    }
+  }
 
+  /**
+   * Start long-polling Telegram getUpdates loop.
+   */
+  public async startPolling(): Promise<void> {
+    if (!this.apiUrl) {
+      console.log("Telegram Bot Token not configured. Polling disabled.");
+      return;
+    }
+
+    this.isRunning = true;
+    console.log("🤖 Telegram Bot long-polling started...");
+    console.log("📋 Commands: /start, /pnl, /wallet, /close, /help");
+    console.log("⏰ Auto-close scheduled: 1:30 PM IST daily.");
+
+    if (this.defaultChatId) {
+      await this.sendMainMenu(this.defaultChatId);
+    }
+
+    while (this.isRunning) {
       try {
-        await this.bot.sendMessage(chatId, chunk, {
-          parse_mode: "Markdown",
-          ...(isLast ? opts : {}),
+        const resp = await this.http.get(`${this.apiUrl}/getUpdates`, {
+          params: {
+            offset: this.lastUpdateId + 1,
+            timeout: 20,
+          },
+          timeout: 25000,
         });
-      } catch {
-        try {
-          await this.bot.sendMessage(chatId, chunk, {
-            ...(isLast ? opts : {}),
-          });
-        } catch (retryErr: any) {
-          console.error(`Telegram send failure: ${retryErr.message}`);
+
+        const updates: any[] = resp.data?.result || [];
+        for (const update of updates) {
+          this.lastUpdateId = Math.max(this.lastUpdateId, update.update_id || 0);
+
+          if (update.callback_query) {
+            await this.processCallbackQuery(update.callback_query);
+          } else if (update.message && update.message.text) {
+            const text = update.message.text;
+            const fromChat = update.message.chat?.id ? update.message.chat.id.toString() : this.defaultChatId;
+            console.log(`Telegram Command: '${text}' from chat ${fromChat}`);
+            await this.processCommand(text, fromChat);
+          }
+        }
+      } catch (err: any) {
+        if (err.response?.status === 409) {
+          console.warn("Telegram conflict (another instance polling). Waiting 5s...");
+          await new Promise((r) => setTimeout(r, 5000));
+        } else if (err.code !== "ECONNABORTED") {
+          await new Promise((r) => setTimeout(r, 3000));
         }
       }
     }
   }
 
-  public start(): void {
-    console.log("🤖 Telegram Bot polling started!");
-    console.log("⏰ 1:30 PM IST Auto-Close active.");
-    if (this.chatId) {
-      this.sendMainMenu(this.chatId);
-    }
-  }
-
   public stop(): void {
-    this.bot.stopPolling();
-    console.log("Telegram Bot polling stopped.");
+    this.isRunning = false;
   }
 }
