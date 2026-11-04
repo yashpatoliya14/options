@@ -1,15 +1,59 @@
 /**
- * Configuration module for Options IV Arbitrage Algo.
+ * Configuration module for Options Arbitrage Bot.
+ * Delta Exchange (Long) vs CoinDCX (Short)
  */
 
 import path from "path";
 import dotenv from "dotenv";
 
-// Load .env
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
+export interface AssetConfig {
+  name: string;
+  symbol: string;
+  deltaUnderlying: string;   // Delta Exchange underlying symbol
+  coindcxPrefix: string;     // CoinDCX instrument prefix
+  lotSizeUnits: number;      // Base units per "lot" (0.1 for all)
+  coindcxLots: number;       // CoinDCX lots for 0.1 units
+  deltaLots: number;         // Delta lots for 0.1 units
+  deltaContractSize: number; // Size of 1 Delta contract in base units
+}
+
+export const ASSETS: Record<string, AssetConfig> = {
+  BTC: {
+    name: "Bitcoin",
+    symbol: "BTC",
+    deltaUnderlying: "BTC",
+    coindcxPrefix: "BTC",
+    lotSizeUnits: 0.1,        // 1 lot = 0.1 BTC on CoinDCX
+    coindcxLots: 1,           // 1 CoinDCX lot = 0.1 BTC
+    deltaLots: 10,            // 10 Delta lots = 0.1 BTC
+    deltaContractSize: 0.01,  // 1 Delta contract = 0.01 BTC
+  },
+  ETH: {
+    name: "Ethereum",
+    symbol: "ETH",
+    deltaUnderlying: "ETH",
+    coindcxPrefix: "ETH",
+    lotSizeUnits: 0.1,
+    coindcxLots: 1,
+    deltaLots: 10,
+    deltaContractSize: 0.01,
+  },
+  XAUTUSDT: {
+    name: "Tether Gold",
+    symbol: "XAUTUSDT",
+    deltaUnderlying: "XAUT",
+    coindcxPrefix: "XAUT",
+    lotSizeUnits: 0.1,
+    coindcxLots: 1,
+    deltaLots: 10,
+    deltaContractSize: 0.01,
+  },
+};
+
 export const Config = {
-  // Delta Exchange (Exchange 1: 5:30 PM IST / 12:00 UTC Expiry)
+  // Delta Exchange
   DELTA_API_KEY: process.env.DELTA_API_KEY || "",
   DELTA_API_SECRET: process.env.DELTA_API_SECRET || "",
   USE_TESTNET: (process.env.USE_TESTNET || "false").toLowerCase() === "true",
@@ -20,36 +64,21 @@ export const Config = {
     return this.USE_TESTNET ? this.DELTA_TESTNET_URL : this.DELTA_PROD_URL;
   },
 
-  // CoinSwitch PRO (Exchange 2: 1:30 PM IST / 08:00 UTC Expiry)
-  COINSWITCH_API_KEY: process.env.COINSWITCH_API_KEY || "",
-  COINSWITCH_SECRET_KEY: process.env.COINSWITCH_SECRET_KEY || "",
-  COINSWITCH_BASE_URL: process.env.COINSWITCH_BASE_URL || "https://coinswitch.co",
-  COINSWITCH_PRO_URL: process.env.COINSWITCH_PRO_URL || "https://api-trading.coinswitch.co",
+  // CoinDCX
+  COINDCX_API_KEY: process.env.COINDCX_API_KEY || "",
+  COINDCX_API_SECRET: process.env.COINDCX_API_SECRET || "",
+  COINDCX_BASE_URL: process.env.COINDCX_BASE_URL || "https://api.coindcx.com",
 
-  // Global Lot Size (1 single variable for both exchanges)
-  // 1 Delta BTC option contract = 0.001 BTC
-  // CoinSwitch lot = BTC units
-  TRADE_LOT_BTC: parseFloat(process.env.TRADE_LOT_BTC || "0.05"),
-
-  // Underlying Asset & Pricing
-  UNDERLYING_ASSET: (process.env.UNDERLYING_ASSET || "BTC").toUpperCase(),
-  get UNDERLYING_SYMBOL(): string {
-    return `${this.UNDERLYING_ASSET}USD`;
-  },
-  USD_INR_RATE: parseFloat(process.env.USD_INR_RATE || "86.50"),
-
-  DELTA_EXPIRY_TIME_IST: "17:30",      // 5:30 PM IST (12:00 UTC)
-  COINSWITCH_EXPIRY_TIME_IST: "13:30", // 1:30 PM IST (08:00 UTC)
-  DAILY_ROLLOVER_TIME_IST: "13:30",
-
-  NUM_OTM_STRIKES: parseInt(process.env.NUM_OTM_STRIKES || "5", 10),
-
-  // Fund Balance & Rebalance Alert Settings
-  FUND_IMBALANCE_THRESHOLD_PCT: parseFloat(process.env.FUND_IMBALANCE_THRESHOLD_PCT || "25.0"),
-  BALANCE_CHECK_INTERVAL_MINUTES: parseInt(process.env.BALANCE_CHECK_INTERVAL_MINUTES || "30", 10),
-
-  // Telegram Notifications
+  // Telegram
   TELEGRAM_ENABLED: (process.env.TELEGRAM_ENABLED || "true").toLowerCase() === "true",
   TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || "",
-  TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID || ""
+  TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID || "",
+
+  // Pricing
+  USD_INR_RATE: parseFloat(process.env.USD_INR_RATE || "86.50"),
+  NUM_OTM_STRIKES: parseInt(process.env.NUM_OTM_STRIKES || "5", 10),
+
+  // Auto close time (1:30 PM IST)
+  AUTO_CLOSE_HOUR_IST: 13,
+  AUTO_CLOSE_MINUTE_IST: 30,
 };
