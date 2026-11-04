@@ -54,8 +54,8 @@ export const ASSETS: Record<string, AssetConfig> = {
 
 export const Config = {
   // Delta Exchange
-  DELTA_API_KEY: process.env.DELTA_API_KEY || "",
-  DELTA_API_SECRET: process.env.DELTA_API_SECRET || "",
+  DELTA_API_KEY: (process.env.DELTA_API_KEY || "").trim(),
+  DELTA_API_SECRET: (process.env.DELTA_API_SECRET || "").trim(),
   USE_TESTNET: (process.env.USE_TESTNET || "false").toLowerCase() === "true",
   DELTA_TESTNET_URL: process.env.DELTA_TESTNET_URL || "https://cdn-ind.testnet.deltaex.org",
   DELTA_PROD_URL: process.env.DELTA_BASE_URL || "https://api.india.delta.exchange",
@@ -65,14 +65,14 @@ export const Config = {
   },
 
   // CoinDCX
-  COINDCX_API_KEY: process.env.COINDCX_API_KEY || "",
-  COINDCX_API_SECRET: process.env.COINDCX_API_SECRET || "",
+  COINDCX_API_KEY: (process.env.COINDCX_API_KEY || "").trim(),
+  COINDCX_API_SECRET: (process.env.COINDCX_API_SECRET || "").trim(),
   COINDCX_BASE_URL: process.env.COINDCX_BASE_URL || "https://api.coindcx.com",
 
   // Telegram
   TELEGRAM_ENABLED: (process.env.TELEGRAM_ENABLED || "true").toLowerCase() === "true",
-  TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || "",
-  TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID || "",
+  TELEGRAM_BOT_TOKEN: (process.env.TELEGRAM_BOT_TOKEN || "").trim(),
+  TELEGRAM_CHAT_ID: (process.env.TELEGRAM_CHAT_ID || "").trim(),
 
   // Pricing
   USD_INR_RATE: parseFloat(process.env.USD_INR_RATE || "86.50"),

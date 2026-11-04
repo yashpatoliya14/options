@@ -53,4 +53,13 @@ jobs:
           port: ${{ secrets.VM_PORT }}
           key: ${{ secrets.VM_SSH_KEY }}
           script: |
-            ~/deploy-options.sh
+            if [ -f ~/deploy-options.sh ]; then
+              bash ~/deploy-options.sh || true
+            fi
+            cd /root/options || cd ~/options
+            git pull origin master
+            npm install
+            npm run build
+            systemctl restart options-algo || sudo systemctl restart options-algo || pm2 reload ecosystem.config.js || pm2 restart all || true
+            sleep 2
+            systemctl status options-algo --no-pager || true
