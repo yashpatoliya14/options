@@ -6,8 +6,8 @@
  * Strategy:
  *  - LONG (BUY) on Delta Exchange (10 lots = 0.1 unit)
  *  - SHORT (SELL) on CoinSwitch PRO (1 lot = 0.1 unit)
- *  - Deducts fees for BOTH Delta Exchange and CoinSwitch PRO.
- *  - Arbitrage Green Mark (🟢): Highlighted ONLY when Net Profit > 0 after all fees.
+ *  - Pure spreads & profit (WITHOUT fee deductions)
+ *  - Arbitrage Green Mark (🟢): Highlighted when CoinSwitch Premium >= Delta Premium.
  *  - Computes Combined Live Net PnL and Live Wallet Balances.
  *  - Automated Daily Cutoff at 1:30 PM IST.
  */
@@ -36,7 +36,7 @@ class ArbitrageEngine {
         return { today, tomorrow, dates: [today, tomorrow] };
     }
     /**
-     * Scan options for a given asset. Returns ATM + OTM comparisons with fee deduction.
+     * Scan options for a given asset. Returns ATM + OTM comparisons (Pure, without fees).
      */
     async scanOptions(assetKey, expiryFilter) {
         const asset = config_1.ASSETS[assetKey];
@@ -115,39 +115,11 @@ class ArbitrageEngine {
                 const coinswitchPrice = cOpt?.markPrice || 0;
                 const spreadUsd = Math.round((coinswitchPrice - deltaPrice) * 100) / 100;
                 const spreadPct = deltaPrice > 0 ? Math.round(((spreadUsd / deltaPrice) * 100) * 10) / 10 : 0;
-                // 1. Gross Profit before fees
-                // 0.1 units notional (CoinSwitch 1 lot = 0.1, Delta 10 lots = 0.1)
-                const grossProfitUsd = Math.round(spreadUsd * asset.lotSizeUnits * 100) / 100;
-                const grossProfitInr = Math.round(grossProfitUsd * config_1.Config.USD_INR_RATE * 100) / 100;
-                // 2. Fee Deductions for Delta Exchange (Long Leg: BUY 0.1 unit)
-                // Delta Exchange rule: 0.05% of notional (spot * 0.1), capped at 10% of premium
-                const deltaNotionalUsd = spotPrice * asset.lotSizeUnits;
-                const deltaPremiumTotalUsd = deltaPrice * asset.lotSizeUnits;
-                const deltaFeeNotionalUsd = deltaNotionalUsd * (config_1.Config.DELTA_FEE_PCT / 100);
-                const deltaFeeCapUsd = deltaPremiumTotalUsd * (config_1.Config.MAX_PREMIUM_FEE_CAP_PCT / 100);
-                const deltaFeeUsd = deltaPrice > 0
-                    ? Math.round(Math.min(deltaFeeNotionalUsd, deltaFeeCapUsd) * 100) / 100
-                    : 0;
-                const deltaFeeInr = Math.round(deltaFeeUsd * config_1.Config.USD_INR_RATE * 100) / 100;
-                // 3. Fee Deductions for CoinSwitch PRO (Short Leg: SELL 0.1 unit)
-                // CoinSwitch PRO rule: 0.05% of notional, capped at 10% of premium
-                const coinswitchNotionalUsd = spotPrice * asset.lotSizeUnits;
-                const coinswitchPremiumTotalUsd = coinswitchPrice * asset.lotSizeUnits;
-                const coinswitchFeeNotionalUsd = coinswitchNotionalUsd * (config_1.Config.COINSWITCH_FEE_PCT / 100);
-                const coinswitchFeeCapUsd = coinswitchPremiumTotalUsd * (config_1.Config.MAX_PREMIUM_FEE_CAP_PCT / 100);
-                const coinswitchFeeUsd = coinswitchPrice > 0
-                    ? Math.round(Math.min(coinswitchFeeNotionalUsd, coinswitchFeeCapUsd) * 100) / 100
-                    : 0;
-                const coinswitchFeeInr = Math.round(coinswitchFeeUsd * config_1.Config.USD_INR_RATE * 100) / 100;
-                // 4. Total Combined Fees
-                const totalFeesUsd = Math.round((deltaFeeUsd + coinswitchFeeUsd) * 100) / 100;
-                const totalFeesInr = Math.round(totalFeesUsd * config_1.Config.USD_INR_RATE * 100) / 100;
-                // 5. Net Profit After Deducting All Fees
-                const netProfitUsd = Math.round((grossProfitUsd - totalFeesUsd) * 100) / 100;
-                const netProfitInr = Math.round(netProfitUsd * config_1.Config.USD_INR_RATE * 100) / 100;
-                // 6. Arbitrage Green Mark Condition:
-                // ONLY marked green (🟢) if Net Profit > 0 after deducting all fees for both exchanges!
-                const isArb = netProfitUsd > 0 && coinswitchPrice > deltaPrice && coinswitchPrice > 0 && deltaPrice > 0;
+                // Profit (pure, without fees): spread * 0.1 units
+                const potentialProfitUsd = Math.round(spreadUsd * asset.lotSizeUnits * 100) / 100;
+                const potentialProfitInr = Math.round(potentialProfitUsd * config_1.Config.USD_INR_RATE * 100) / 100;
+                // Arbitrage Condition: CoinSwitch (Short Premium) >= Delta (Long Premium)
+                const isArb = coinswitchPrice >= deltaPrice && coinswitchPrice > 0 && deltaPrice > 0;
                 return {
                     strike,
                     optionType: optType,
@@ -170,16 +142,8 @@ class ArbitrageEngine {
                     underlyingUnits: asset.lotSizeUnits,
                     spreadUsd,
                     spreadPct,
-                    grossProfitUsd,
-                    grossProfitInr,
-                    deltaFeeUsd,
-                    deltaFeeInr,
-                    coinswitchFeeUsd,
-                    coinswitchFeeInr,
-                    totalFeesUsd,
-                    totalFeesInr,
-                    netProfitUsd,
-                    netProfitInr,
+                    potentialProfitUsd,
+                    potentialProfitInr,
                     isArb,
                 };
             };
@@ -212,10 +176,10 @@ class ArbitrageEngine {
                     allComparisons.push(comp);
                 }
             }
-            // Filter only true green mark arbitrage opportunities (Net Profit > 0 after fees)
-            const arbOpportunities = allComparisons
+            // Filter suggested green mark trades (Short Premium >= Long Premium)
+            const suggestedTrades = allComparisons
                 .filter((c) => c.isArb)
-                .sort((a, b) => b.netProfitUsd - a.netProfitUsd);
+                .sort((a, b) => b.spreadPct - a.spreadPct);
             results.push({
                 underlying: asset.symbol,
                 spotPrice,
@@ -227,7 +191,7 @@ class ArbitrageEngine {
                 otmCalls,
                 otmPuts,
                 allStrikes: allComparisons,
-                arbOpportunities,
+                suggestedTrades,
             });
         }
         return results;
@@ -256,10 +220,8 @@ class ArbitrageEngine {
             coinswitchSymbol: strike.coinswitchSymbol,
             coinswitchSide: "sell",
             coinswitchLots: asset.coinswitchLots,
-            grossProfitUsd: strike.grossProfitUsd,
-            totalFeesUsd: strike.totalFeesUsd,
-            netProfitUsd: strike.netProfitUsd,
-            netProfitInr: strike.netProfitInr,
+            potentialProfitUsd: strike.potentialProfitUsd,
+            potentialProfitInr: strike.potentialProfitInr,
             status: "pending",
         };
         try {

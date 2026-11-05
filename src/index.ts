@@ -13,8 +13,8 @@ async function main() {
   console.log("============================================================");
   console.log(`  Mode: LIVE (Simulations Disabled)`);
   console.log(`  Telegram: ${Config.TELEGRAM_ENABLED ? "ENABLED" : "DISABLED"}`);
-  console.log(`  Fees Deducted: Delta (${Config.DELTA_FEE_PCT}%) + CoinSwitch (${Config.COINSWITCH_FEE_PCT}%)`);
-  console.log(`  Arb Signal: Green Mark (🟢) ONLY when Net Profit > 0 after all fees`);
+  console.log(`  Pricing: Pure Spread & Profit (No Fee Deduction)`);
+  console.log(`  Arb Signal: Green Mark (🟢) when Short Premium >= Long Premium`);
   console.log(`  Auto-Close: 1:30 PM IST daily (08:00 UTC)`);
   console.log(`  Assets: BTC, ETH, XAUTUSDT`);
   console.log("============================================================");

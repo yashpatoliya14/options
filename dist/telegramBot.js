@@ -8,10 +8,10 @@
  *
  * Features:
  *  - Interactive inline buttons to scan and execute trades live
- *  - Automatic fee deduction for BOTH Delta Exchange and CoinSwitch PRO
- *  - Arbitrage Green Mark (🟢): Shown ONLY when Net Profit > 0 after all fees
+ *  - Pure price spreads and profit calculations (WITHOUT fee deductions)
+ *  - Arbitrage Green Mark (🟢): Highlighted when Short Premium >= Long Premium
  *  - Live Net PnL tracking for positions on both exchanges
- *  - Live wallet balances (USDT, INR, Equity, Available Margin)
+ *  - Live wallet balances (INR, USDT, Equity, Available Margin)
  *  - Daily automatic position close at 1:30 PM IST (08:00 UTC)
  */
 var __importDefault = (this && this.__importDefault) || function (mod) {
@@ -115,7 +115,6 @@ class ArbTelegramBot {
                 await this.http.post(`${this.apiUrl}/sendMessage`, payload);
             }
             catch (err) {
-                // Retry without Markdown if syntax failed
                 try {
                     delete payload.parse_mode;
                     await this.http.post(`${this.apiUrl}/sendMessage`, payload);
@@ -170,8 +169,8 @@ class ArbTelegramBot {
             "━━━━━━━━━━━━━━━━━━━━━━\n" +
             "🏛 *Delta Exchange:* LONG (BUY 10 lots = 0.1 unit)\n" +
             "🏦 *CoinSwitch PRO:* SHORT (SELL 1 lot = 0.1 unit)\n\n" +
-            "💰 *Fee Model:* Taker fees for BOTH exchanges deducted in advance\n" +
-            "🟢 *Green Mark:* Highlights ONLY trades with NET profit > 0 after fees!\n" +
+            "🎯 *Strategy:* Short CoinSwitch (higher premium) & Long Delta (lower premium)\n" +
+            "🟢 *Green Mark:* Short Premium ≥ Long Premium\n" +
             "⏰ *Auto-Close:* 1:30 PM IST daily (08:00 UTC)\n\n" +
             "Select an asset to scan or choose an action below:";
         await this.sendMessage(text, chatId, keyboard);
@@ -195,18 +194,17 @@ class ArbTelegramBot {
             `━━━━━━━━━━━━━━━━━━━━━━\n` +
             `📦 *Contract Sizing (0.1 units):*\n` +
             `   • CoinSwitch: *${asset.coinswitchLots} lot* = ${asset.lotSizeUnits} ${asset.symbol}\n` +
-            `   • Delta: *${asset.deltaLots} lots* = ${asset.lotSizeUnits} ${asset.symbol}\n` +
-            `💸 *Fee Deduction:* Delta (0.05%) + CoinSwitch (0.05%)\n\n` +
+            `   • Delta: *${asset.deltaLots} lots* = ${asset.lotSizeUnits} ${asset.symbol}\n\n` +
             `Select expiry date to scan:`;
         await this.sendMessage(text, chatId, keyboard);
     }
     /**
-     * Options Scanner Screen: Lists ATM & OTM Strikes with fee deduction and green arb marks.
+     * Options Scanner Screen: Lists ATM & OTM Strikes with individual Execute buttons.
      */
     async handleScanOptions(chatId, assetKey, expiryDate) {
         const asset = config_1.ASSETS[assetKey];
         await this.sendMessage(`🔍 *Scanning ${asset.symbol} live options for ${expiryDate}...*\n` +
-            `_Fetching Delta Exchange & CoinSwitch PRO orderbooks and calculating fees..._`, chatId);
+            `_Fetching Delta Exchange & CoinSwitch PRO live books..._`, chatId);
         try {
             const results = await this.engine.scanOptions(assetKey, expiryDate);
             if (results.length === 0 || results[0].allStrikes.length === 0) {
@@ -221,20 +219,19 @@ class ArbTelegramBot {
             text += `━━━━━━━━━━━━━━━━━━━━━━\n`;
             text += `🪙 *Spot:* *$${spotStr}* (₹${spotInr})\n`;
             text += `📅 *Expiry:* *${chain.expiryDate} (1:30 PM IST Cutoff)*\n`;
-            text += `📦 *Size:* *${asset.lotSizeUnits} ${asset.symbol}* (Delta: 10 lots | CoinSwitch: 1 lot)\n`;
-            text += `💸 *Fees:* Delta (${config_1.Config.DELTA_FEE_PCT}%) + CoinSwitch (${config_1.Config.COINSWITCH_FEE_PCT}%) deducted\n`;
+            text += `📦 *Trade Size:* *${asset.lotSizeUnits} ${asset.symbol}* (Delta: 10 lots | CoinSwitch: 1 lot)\n`;
             text += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-            // ── Arbitrage Opportunities (Net Profit > 0 after fees) ──
-            if (chain.arbOpportunities.length > 0) {
-                text += `🔥 *🟢 ARBITRAGE OPPORTUNITIES (NET PROFITABLE AFTER FEES)* 🔥\n`;
-                text += `_CoinSwitch premium covers Delta premium + ALL exchange fees:_\n\n`;
-                for (const t of chain.arbOpportunities.slice(0, 4)) {
+            // ── Suggested Trades (Short Premium >= Long Premium) ──
+            if (chain.suggestedTrades.length > 0) {
+                text += `🔥 *SUGGESTED TRADES (Short Premium ≥ Long Premium)* 🔥\n`;
+                text += `_CoinSwitch short premium covers Delta long cost:_\n\n`;
+                for (const t of chain.suggestedTrades.slice(0, 4)) {
                     text += this.formatStrikeRow(t, true);
                 }
                 text += `\n`;
             }
             else {
-                text += `ℹ️ _No green mark arbitrage right now (fees exceed premium spread). All strikes shown below:_\n\n`;
+                text += `ℹ️ _No strict CoinSwitch ≥ Delta spread right now. Market ATM/OTM rates below:_\n\n`;
             }
             // ── ATM Strikes ──
             text += `📍 *ATM STRIKES (Around ${chain.atmStrike.toLocaleString()})*\n`;
@@ -261,12 +258,12 @@ class ArbTelegramBot {
                 text += `\n`;
             }
             text += `👉 *Tap any button below to execute the trade live:*`;
-            // ── Clickable Execute Buttons with Net Profit Tag ──
+            // ── Clickable Execute Buttons ──
             const keyboard = [];
             for (const s of chain.allStrikes) {
-                const tag = s.isArb ? "🟢" : "⚪";
-                const netSign = s.netProfitUsd >= 0 ? "+" : "";
-                const label = `${tag} ${s.strike.toLocaleString()} ${s.optionType} | Net: ${netSign}$${s.netProfitUsd.toFixed(2)} (₹${s.netProfitInr})`;
+                const tag = s.isArb ? "🟢 ARB" : "⚪";
+                const sign = s.spreadUsd >= 0 ? "+" : "";
+                const label = `${tag} ${s.strike.toLocaleString()} ${s.optionType} | Sprd: ${sign}$${s.spreadUsd.toFixed(2)}`;
                 const cbData = `exec_${assetKey}_${s.strike}_${s.optionType}_${s.expiryDate}`;
                 keyboard.push([{ text: label, callback_data: cbData }]);
             }
@@ -286,18 +283,17 @@ class ArbTelegramBot {
         }
     }
     /**
-     * Strike row formatting with fully calculated fees and Net Profit.
+     * Strike row formatting without fees.
      */
     formatStrikeRow(s, highlight = false) {
         const icon = s.isArb ? "🟢" : "⚪";
-        const netSign = s.netProfitUsd >= 0 ? "+" : "";
-        const grossSign = s.grossProfitUsd >= 0 ? "+" : "";
+        const spreadSign = s.spreadUsd >= 0 ? "+" : "";
+        const spreadTag = s.spreadUsd >= 0 ? `+${s.spreadPct}%` : `${s.spreadPct}%`;
         let r = `${icon} *${s.strike.toLocaleString()} ${s.optionType}* (${s.category})\n`;
-        r += `   • Delta (Long BUY): *$${s.deltaPrice.toFixed(2)}* (Fee: -$${s.deltaFeeUsd.toFixed(2)})\n`;
-        r += `   • CoinSwitch (Short SELL): *$${s.coinswitchPrice.toFixed(2)}* (Fee: -$${s.coinswitchFeeUsd.toFixed(2)})\n`;
-        r += `   • Gross Profit: *${grossSign}$${s.grossProfitUsd.toFixed(2)}* (₹${s.grossProfitInr})\n`;
-        r += `   • Total Fees: *-$${s.totalFeesUsd.toFixed(2)}* (₹${s.totalFeesInr})\n`;
-        r += `   🎯 *NET PROFIT:* ${icon} *${netSign}$${s.netProfitUsd.toFixed(2)}* (₹${s.netProfitInr})${s.isArb ? " 🟢 [ARB]" : ""}\n`;
+        r += `   • Delta (Long BUY): *$${s.deltaPrice.toFixed(2)}* (IV: ${s.deltaIv.toFixed(1)}%)\n`;
+        r += `   • CoinSwitch (Short SELL): *$${s.coinswitchPrice.toFixed(2)}* (IV: ${s.coinswitchIv.toFixed(1)}%)\n`;
+        r += `   • Spread: *${spreadSign}$${s.spreadUsd.toFixed(2)}* (${spreadTag})\n`;
+        r += `   • Profit (${s.underlyingUnits} units): *${spreadSign}$${s.potentialProfitUsd.toFixed(2)}* (₹${s.potentialProfitInr.toLocaleString("en-IN")})${s.isArb ? " 🟢 [ARB]" : ""}\n`;
         return r;
     }
     /**
@@ -355,9 +351,7 @@ class ArbTelegramBot {
                 `🏦 *CoinSwitch PRO (SHORT):* ${trade.coinswitchOrderResult?.success ? "✅ FILLED" : "❌ FAILED"}`,
                 `   • Details: ${trade.coinswitchOrderResult?.message || "No response"}`,
                 ``,
-                `💰 *Gross Profit:* $${trade.grossProfitUsd.toFixed(2)}`,
-                `💸 *Total Fees Deducted:* -$${trade.totalFeesUsd.toFixed(2)}`,
-                `🎯 *Target Net Profit:* 🟢 *+$${trade.netProfitUsd.toFixed(2)}* (₹${trade.netProfitInr})`,
+                `🎯 *Target Spread Profit:* 🟢 *+$${trade.potentialProfitUsd.toFixed(2)}* (₹${trade.potentialProfitInr.toLocaleString("en-IN")})`,
             ];
             if (trade.error) {
                 lines.push(`\n⚠️ *Warning:* ${trade.error}`);
@@ -554,7 +548,6 @@ class ArbTelegramBot {
         }
         this.isRunning = true;
         console.log("🤖 Telegram Bot polling started. Listening for commands and button clicks...");
-        // Send startup message with main menu
         if (this.defaultChatId) {
             await this.sendMainMenu(this.defaultChatId);
         }
@@ -569,7 +562,6 @@ class ArbTelegramBot {
                 const updates = resp.data?.result || [];
                 for (const u of updates) {
                     this.lastUpdateId = Math.max(this.lastUpdateId, u.update_id);
-                    // Handle button callbacks
                     if (u.callback_query) {
                         const cb = u.callback_query;
                         const cbId = cb.id;
@@ -605,7 +597,6 @@ class ArbTelegramBot {
                             await this.handleCloseAllExecute(chatId);
                         }
                     }
-                    // Handle text messages
                     if (u.message && u.message.text) {
                         const text = u.message.text.trim().toLowerCase();
                         const chatId = u.message.chat.id.toString();
