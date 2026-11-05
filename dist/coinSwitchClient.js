@@ -171,44 +171,66 @@ class CoinSwitchClient {
                 error: "CoinSwitch API credentials missing in .env",
             };
         }
-        const endpoints = [
-            "/trade/api/v2/user/portfolio",
-            "/trade/api/v2/wallet/balance",
-        ];
-        for (const path of endpoints) {
-            try {
-                const headers = this.signRequest("GET", path);
-                const resp = await this.http.get(path, { headers });
-                if (resp.status === 200 && resp.data) {
-                    const data = resp.data.data || resp.data;
-                    const totalInr = parseFloat(data.total_portfolio_value_inr || data.total_balance_inr || "0");
-                    const availInr = parseFloat(data.available_balance_inr || data.available_inr || totalInr.toString());
-                    const totalUsd = totalInr > 0 ? totalInr / config_1.Config.USD_INR_RATE : 0;
-                    const availUsd = availInr > 0 ? availInr / config_1.Config.USD_INR_RATE : 0;
-                    const currencies = [];
-                    if (Array.isArray(data.balances)) {
-                        for (const b of data.balances) {
+        const path = "/trade/api/v2/user/portfolio";
+        try {
+            const headers = this.signRequest("GET", path);
+            const resp = await this.http.get(path, { headers });
+            if (resp.status === 200 && resp.data) {
+                const rawList = Array.isArray(resp.data?.data)
+                    ? resp.data.data
+                    : Array.isArray(resp.data)
+                        ? resp.data
+                        : [];
+                let totalInr = 0;
+                let availableInr = 0;
+                let lockedInr = 0;
+                const currencies = [];
+                if (rawList.length > 0) {
+                    for (const item of rawList) {
+                        const curr = (item.currency || item.name || "").toUpperCase();
+                        const mainBal = parseFloat(item.main_balance || item.balance || item.available || "0");
+                        const blocked = parseFloat(item.blocked_balance_order || item.blocked || item.locked || "0");
+                        const currentVal = parseFloat(item.current_value || item.value || "0");
+                        const totalCoin = mainBal + blocked;
+                        if (totalCoin > 0 || mainBal > 0) {
                             currencies.push({
-                                symbol: b.currency || b.symbol,
-                                total: parseFloat(b.total || "0"),
-                                available: parseFloat(b.available || "0"),
+                                symbol: curr,
+                                total: totalCoin,
+                                available: mainBal,
                             });
                         }
+                        if (curr === "INR") {
+                            totalInr += totalCoin;
+                            availableInr += mainBal;
+                            lockedInr += blocked;
+                        }
+                        else if (currentVal > 0) {
+                            totalInr += currentVal;
+                            availableInr += (mainBal / (totalCoin || 1)) * currentVal;
+                        }
                     }
-                    return {
-                        exchange: "CoinSwitch",
-                        walletName: "Options Portfolio",
-                        balanceUsd: Math.round(totalUsd * 100) / 100,
-                        balanceInr: Math.round(totalInr * 100) / 100,
-                        availableUsd: Math.round(availUsd * 100) / 100,
-                        availableInr: Math.round(availInr * 100) / 100,
-                        currencies,
-                    };
                 }
+                else if (resp.data?.data && typeof resp.data.data === "object") {
+                    totalInr = parseFloat(resp.data.data.total_portfolio_value_inr || resp.data.data.total_balance_inr || "0");
+                    availableInr = parseFloat(resp.data.data.available_balance_inr || resp.data.data.available_inr || totalInr.toString());
+                }
+                const totalUsd = totalInr > 0 ? totalInr / config_1.Config.USD_INR_RATE : 0;
+                const availableUsd = availableInr > 0 ? availableInr / config_1.Config.USD_INR_RATE : 0;
+                return {
+                    exchange: "CoinSwitch",
+                    walletName: "Options Portfolio",
+                    balanceUsd: Math.round(totalUsd * 100) / 100,
+                    balanceInr: Math.round(totalInr * 100) / 100,
+                    availableUsd: Math.round(availableUsd * 100) / 100,
+                    availableInr: Math.round(availableInr * 100) / 100,
+                    lockedMarginInr: Math.round(lockedInr * 100) / 100,
+                    lockedMarginUsd: Math.round((lockedInr / config_1.Config.USD_INR_RATE) * 100) / 100,
+                    currencies,
+                };
             }
-            catch (err) {
-                // try next endpoint
-            }
+        }
+        catch (err) {
+            console.warn(`CoinSwitch wallet error: ${err.message}`);
         }
         return {
             exchange: "CoinSwitch",
