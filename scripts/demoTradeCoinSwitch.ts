@@ -3,13 +3,12 @@
  *
  * Flow:
  * 1. Fetches live BTC spot price & options strikes from CoinSwitch PRO.
- * 2. Selects an active strike (e.g. green mark Arb strike or ATM strike).
- * 3. Calculates fees for both Delta and CoinSwitch.
- * 4. Punches a Demo SHORT trade (SELL 1 lot = 0.1 BTC) at live market price.
- * 5. Pushes trade opening alert to Telegram.
- * 6. Waits 3 seconds.
- * 7. Immediately closes the position (BUY 1 lot = 0.1 BTC) at live market price.
- * 8. Calculates Realized PnL (with fee deduction) and sends closing report to Telegram.
+ * 2. Selects an active strike (e.g. green arb strike or ATM strike).
+ * 3. Punches a Demo SHORT trade (SELL 1 lot = 0.1 BTC) at live market price.
+ * 4. Pushes trade opening alert to Telegram.
+ * 5. Waits 3 seconds.
+ * 6. Immediately closes the position (BUY 1 lot = 0.1 BTC) at live market price.
+ * 7. Calculates Realized PnL and sends closing report to Telegram.
  */
 
 import axios from "axios";
@@ -56,15 +55,15 @@ async function runDemoTrade() {
 
   const chain = scanResults[0];
   const spotPrice = chain.spotPrice;
-  // Choose the best suggested green arb strike, or ATM strike
-  const strike = chain.arbOpportunities[0] || chain.atmPuts[0] || chain.atmCalls[0] || chain.allStrikes[0];
+  // Choose the best suggested strike, or ATM strike
+  const strike = chain.suggestedTrades[0] || chain.atmPuts[0] || chain.atmCalls[0] || chain.allStrikes[0];
 
   console.log(`🪙 BTC Spot Price: $${spotPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}`);
   console.log(`📍 Selected Strike: ${strike.strike.toLocaleString()} ${strike.optionType} (${strike.category})`);
   console.log(`📅 Expiry Date: ${strike.expiryDate} (1:30 PM IST Cutoff)`);
   console.log(`💵 Live CoinSwitch Premium: $${strike.coinswitchPrice.toFixed(2)} | Delta Premium: $${strike.deltaPrice.toFixed(2)}`);
-  console.log(`💸 Deducted Fees: Delta: -$${strike.deltaFeeUsd.toFixed(2)} | CoinSwitch: -$${strike.coinswitchFeeUsd.toFixed(2)}`);
-  console.log(`🎯 Net Profit (after fees): ${strike.isArb ? "🟢" : "⚪"} $${strike.netProfitUsd.toFixed(2)} (₹${strike.netProfitInr})`);
+  console.log(`📈 Spread: ${strike.spreadUsd >= 0 ? "+" : ""}$${strike.spreadUsd.toFixed(2)} (${strike.spreadPct}%)`);
+  console.log(`🎯 Spread Profit (0.1 BTC): ${strike.isArb ? "🟢" : "⚪"} $${strike.potentialProfitUsd.toFixed(2)} (₹${strike.potentialProfitInr.toLocaleString("en-IN")})`);
   console.log(`📦 Sizing: 1 CoinSwitch lot = ${asset.lotSizeUnits} BTC`);
   console.log("------------------------------------------------------------");
 
@@ -102,8 +101,7 @@ async function runDemoTrade() {
     `📦 *Order:* SELL ${quantity} lot (= ${notionalBtc} BTC)`,
     `💵 *Entry Premium:* *$${entryPrice.toFixed(2)}*`,
     `💰 *Premium Collected:* +$${premiumReceivedUsd.toFixed(2)} (₹${premiumReceivedInr.toFixed(2)})`,
-    `💸 *Fees Deducted:* -$${strike.totalFeesUsd.toFixed(2)} (₹${strike.totalFeesInr})`,
-    `🎯 *Net Target:* ${strike.isArb ? "🟢" : "⚪"} *$${strike.netProfitUsd.toFixed(2)}* (₹${strike.netProfitInr})`,
+    `🎯 *Spread Profit:* ${strike.isArb ? "🟢" : "⚪"} *$${strike.potentialProfitUsd.toFixed(2)}* (₹${strike.potentialProfitInr.toLocaleString("en-IN")})`,
     `🆔 *Ref ID:* \`#${orderId}\``,
     `━━━━━━━━━━━━━━━━━━━━━━`,
     `⏳ _Simulating 3-second hold before immediate close..._`,
@@ -120,8 +118,7 @@ async function runDemoTrade() {
   const closeOrderId = `CS-CLOSE-${Date.now().toString().slice(-6)}`;
   const exitPrice = Math.max(0.1, Math.round((entryPrice * 0.985) * 100) / 100);
   const premiumPaidUsd = exitPrice * notionalBtc;
-  const grossPnlUsd = Math.round((premiumReceivedUsd - premiumPaidUsd) * 100) / 100;
-  const netRealizedPnlUsd = Math.round((grossPnlUsd - strike.totalFeesUsd) * 100) / 100;
+  const netRealizedPnlUsd = Math.round((premiumReceivedUsd - premiumPaidUsd) * 100) / 100;
   const netRealizedPnlInr = Math.round(netRealizedPnlUsd * Config.USD_INR_RATE * 100) / 100;
 
   let liveCloseAttemptMsg = "";
@@ -134,9 +131,7 @@ async function runDemoTrade() {
 
   console.log(`✅ CLOSE ORDER FILLED: BUY ${quantity} lot(s) (${notionalBtc} BTC) @ $${exitPrice.toFixed(2)}`);
   console.log(`🆔 Close Order ID: #${closeOrderId}`);
-  console.log(`💰 Gross Realized PnL: +$${grossPnlUsd.toFixed(2)}`);
-  console.log(`💸 Total Fees Deducted: -$${strike.totalFeesUsd.toFixed(2)}`);
-  console.log(`🎯 Net Realized PnL: ${netRealizedPnlUsd >= 0 ? "🟢" : "🔴"} $${netRealizedPnlUsd.toFixed(2)} (₹${netRealizedPnlInr.toFixed(2)})`);
+  console.log(`🎯 Realized PnL: ${netRealizedPnlUsd >= 0 ? "🟢" : "🔴"} $${netRealizedPnlUsd.toFixed(2)} (₹${netRealizedPnlInr.toFixed(2)})`);
   console.log(`ℹ️ Status: ${liveCloseAttemptMsg}`);
   console.log("------------------------------------------------------------");
 
@@ -149,9 +144,8 @@ async function runDemoTrade() {
     `📦 *Size:* ${quantity} lot (= ${notionalBtc} BTC)`,
     `💵 *Entry Sell Price:* $${entryPrice.toFixed(2)}`,
     `💵 *Exit Buy Price:* $${exitPrice.toFixed(2)}`,
-    `💸 *Total Fees Deducted:* -$${strike.totalFeesUsd.toFixed(2)} (₹${strike.totalFeesInr})`,
     `━━━━━━━━━━━━━━━━━━━━━━`,
-    `🎯 *REALIZED NET PnL (AFTER FEES):* ${netRealizedPnlUsd >= 0 ? "🟢" : "🔴"} *${netRealizedPnlUsd >= 0 ? "+" : ""}$${netRealizedPnlUsd.toFixed(2)}* (₹${netRealizedPnlInr.toFixed(2)})`,
+    `🎯 *REALIZED NET PnL:* ${netRealizedPnlUsd >= 0 ? "🟢" : "🔴"} *${netRealizedPnlUsd >= 0 ? "+" : ""}$${netRealizedPnlUsd.toFixed(2)}* (₹${netRealizedPnlInr.toFixed(2)})`,
     `🆔 *Close Ref:* \`#${closeOrderId}\``,
     `━━━━━━━━━━━━━━━━━━━━━━`,
     `✅ *Position is now FLAT.*`,
@@ -168,4 +162,3 @@ runDemoTrade().catch((err) => {
   console.error("Demo trade failed:", err);
   process.exit(1);
 });
-

@@ -50,25 +50,13 @@ export interface StrikeComparison {
   // Sizing in underlying units (0.1 BTC, 0.1 ETH, 0.1 XAUT)
   underlyingUnits: number;
 
-  // Spread & Gross Profit
+  // Spread & Profit (Pure pricing without fee deduction)
   spreadUsd: number;          // coinswitchPrice - deltaPrice
   spreadPct: number;
-  grossProfitUsd: number;     // spreadUsd * underlyingUnits
-  grossProfitInr: number;
+  potentialProfitUsd: number; // spreadUsd * underlyingUnits
+  potentialProfitInr: number;
 
-  // Fee Deductions (Both Delta Exchange and CoinSwitch PRO)
-  deltaFeeUsd: number;
-  deltaFeeInr: number;
-  coinswitchFeeUsd: number;
-  coinswitchFeeInr: number;
-  totalFeesUsd: number;
-  totalFeesInr: number;
-
-  // Fully Calculated Net Profit (Gross Profit - Total Fees)
-  netProfitUsd: number;
-  netProfitInr: number;
-
-  // Arbitrage Green Mark (🟢): TRUE only if Net Profit > 0 after all fees
+  // Arbitrage Green Mark (🟢): TRUE when CoinSwitch (Short) >= Delta (Long)
   isArb: boolean;
 }
 
@@ -83,7 +71,7 @@ export interface OptionChainResult {
   otmCalls: StrikeComparison[];
   otmPuts: StrikeComparison[];
   allStrikes: StrikeComparison[];
-  arbOpportunities: StrikeComparison[]; // Only green mark (net profit > 0 after fees)
+  suggestedTrades: StrikeComparison[]; // Green mark (Short Premium >= Long Premium)
 }
 
 export interface LivePosition {
@@ -161,11 +149,8 @@ export interface TradeExecution {
   coinswitchLots: number;
   coinswitchOrderResult?: any;
 
-  // Financial Breakdown
-  grossProfitUsd: number;
-  totalFeesUsd: number;
-  netProfitUsd: number;
-  netProfitInr: number;
+  potentialProfitUsd: number;
+  potentialProfitInr: number;
 
   status: "pending" | "partial" | "filled" | "failed" | "closed";
   error?: string;
