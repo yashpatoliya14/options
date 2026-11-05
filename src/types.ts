@@ -1,15 +1,15 @@
 /**
  * Type definitions for the Options Arbitrage Algorithm.
- * Live Delta Exchange (Long) vs CoinDCX (Short)
+ * Live Delta Exchange (Long / BUY) vs CoinSwitch PRO (Short / SELL)
  */
 
 export type OptionType = "CALL" | "PUT";
 
 export interface ParsedOption {
-  exchange: "Delta" | "CoinDCX";
+  exchange: "Delta" | "CoinSwitch";
   symbol: string;
   productId?: number;           // Delta product_id for order placement
-  instrumentName?: string;      // CoinDCX instrument name
+  instrumentName?: string;      // CoinSwitch instrument name
   underlying: string;
   strike: number;
   optionType: OptionType;
@@ -39,23 +39,37 @@ export interface StrikeComparison {
   deltaProductId?: number;
   deltaLots: number;
 
-  // CoinDCX (Short side: SELL 1 lot = 0.1 unit)
-  coindcxPrice: number;
-  coindcxBid: number;
-  coindcxAsk: number;
-  coindcxIv: number;
-  coindcxSymbol: string;
-  coindcxLots: number;
+  // CoinSwitch (Short side: SELL 1 lot = 0.1 unit)
+  coinswitchPrice: number;
+  coinswitchBid: number;
+  coinswitchAsk: number;
+  coinswitchIv: number;
+  coinswitchSymbol: string;
+  coinswitchLots: number;
 
   // Sizing in underlying units (0.1 BTC, 0.1 ETH, 0.1 XAUT)
   underlyingUnits: number;
 
-  // Spread analysis: CoinDCX (short) - Delta (long)
-  spreadUsd: number;        // coindcxPrice - deltaPrice
+  // Spread & Gross Profit
+  spreadUsd: number;          // coinswitchPrice - deltaPrice
   spreadPct: number;
-  potentialProfitUsd: number;
-  potentialProfitInr: number;
-  isSuggested: boolean;     // short premium >= long premium
+  grossProfitUsd: number;     // spreadUsd * underlyingUnits
+  grossProfitInr: number;
+
+  // Fee Deductions (Both Delta Exchange and CoinSwitch PRO)
+  deltaFeeUsd: number;
+  deltaFeeInr: number;
+  coinswitchFeeUsd: number;
+  coinswitchFeeInr: number;
+  totalFeesUsd: number;
+  totalFeesInr: number;
+
+  // Fully Calculated Net Profit (Gross Profit - Total Fees)
+  netProfitUsd: number;
+  netProfitInr: number;
+
+  // Arbitrage Green Mark (🟢): TRUE only if Net Profit > 0 after all fees
+  isArb: boolean;
 }
 
 export interface OptionChainResult {
@@ -69,11 +83,11 @@ export interface OptionChainResult {
   otmCalls: StrikeComparison[];
   otmPuts: StrikeComparison[];
   allStrikes: StrikeComparison[];
-  suggestedTrades: StrikeComparison[];
+  arbOpportunities: StrikeComparison[]; // Only green mark (net profit > 0 after fees)
 }
 
 export interface LivePosition {
-  exchange: "Delta Exchange" | "CoinDCX";
+  exchange: "Delta Exchange" | "CoinSwitch";
   symbol: string;
   side: "LONG" | "SHORT" | string;
   size: number;
@@ -88,11 +102,11 @@ export interface LivePosition {
 export interface NetPnlReport {
   timestamp: Date;
   deltaPositions: LivePosition[];
-  coindcxPositions: LivePosition[];
+  coinswitchPositions: LivePosition[];
   deltaUnrealizedUsd: number;
   deltaUnrealizedInr: number;
-  coindcxUnrealizedUsd: number;
-  coindcxUnrealizedInr: number;
+  coinswitchUnrealizedUsd: number;
+  coinswitchUnrealizedInr: number;
   totalUnrealizedUsd: number;
   totalUnrealizedInr: number;
   isFlat: boolean;
@@ -100,7 +114,7 @@ export interface NetPnlReport {
 }
 
 export interface LiveWalletInfo {
-  exchange: "Delta Exchange" | "CoinDCX";
+  exchange: "Delta Exchange" | "CoinSwitch";
   walletName?: string;
   balanceUsd: number;
   balanceInr: number;
@@ -119,7 +133,7 @@ export interface LiveWalletInfo {
 export interface CombinedWalletReport {
   timestamp: Date;
   delta: LiveWalletInfo;
-  coindcx: LiveWalletInfo;
+  coinswitch: LiveWalletInfo;
   totalBalanceUsd: number;
   totalBalanceInr: number;
   totalAvailableUsd: number;
@@ -141,11 +155,17 @@ export interface TradeExecution {
   deltaLots: number;
   deltaOrderResult?: any;
 
-  // CoinDCX Short leg
-  coindcxSymbol: string;
-  coindcxSide: "sell";
-  coindcxLots: number;
-  coindcxOrderResult?: any;
+  // CoinSwitch Short leg
+  coinswitchSymbol: string;
+  coinswitchSide: "sell";
+  coinswitchLots: number;
+  coinswitchOrderResult?: any;
+
+  // Financial Breakdown
+  grossProfitUsd: number;
+  totalFeesUsd: number;
+  netProfitUsd: number;
+  netProfitInr: number;
 
   status: "pending" | "partial" | "filled" | "failed" | "closed";
   error?: string;

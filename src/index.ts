@@ -1,6 +1,6 @@
 /**
  * Main entry point for the Options Arbitrage Bot (LIVE ONLY).
- * Delta Exchange (Long) ↔ CoinDCX (Short).
+ * Delta Exchange (Long) ↔ CoinSwitch PRO (Short).
  */
 
 import { Config } from "./config";
@@ -9,11 +9,13 @@ import { ArbTelegramBot } from "./telegramBot";
 async function main() {
   console.log("============================================================");
   console.log("  OPTIONS ARBITRAGE BOT (LIVE DIRECT TRADING)");
-  console.log("  Delta Exchange (Long) ↔ CoinDCX (Short)");
+  console.log("  Delta Exchange (Long) ↔ CoinSwitch PRO (Short)");
   console.log("============================================================");
   console.log(`  Mode: LIVE (Simulations Disabled)`);
   console.log(`  Telegram: ${Config.TELEGRAM_ENABLED ? "ENABLED" : "DISABLED"}`);
-  console.log(`  Auto-Close: 1:30 PM IST daily`);
+  console.log(`  Fees Deducted: Delta (${Config.DELTA_FEE_PCT}%) + CoinSwitch (${Config.COINSWITCH_FEE_PCT}%)`);
+  console.log(`  Arb Signal: Green Mark (🟢) ONLY when Net Profit > 0 after all fees`);
+  console.log(`  Auto-Close: 1:30 PM IST daily (08:00 UTC)`);
   console.log(`  Assets: BTC, ETH, XAUTUSDT`);
   console.log("============================================================");
 

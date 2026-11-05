@@ -1,25 +1,28 @@
 "use strict";
 /**
  * Arbitrage Engine (LIVE ONLY).
- * Compares live options chains across Delta Exchange and CoinDCX.
+ * Compares live options chains across Delta Exchange and CoinSwitch PRO.
+ *
  * Strategy:
  *  - LONG (BUY) on Delta Exchange (10 lots = 0.1 unit)
- *  - SHORT (SELL) on CoinDCX (1 lot = 0.1 unit)
- *  - Suggests strikes where CoinDCX premium >= Delta premium.
- *  - Computes Live Net PnL and Live Wallet Balances.
+ *  - SHORT (SELL) on CoinSwitch PRO (1 lot = 0.1 unit)
+ *  - Deducts fees for BOTH Delta Exchange and CoinSwitch PRO.
+ *  - Arbitrage Green Mark (🟢): Highlighted ONLY when Net Profit > 0 after all fees.
+ *  - Computes Combined Live Net PnL and Live Wallet Balances.
+ *  - Automated Daily Cutoff at 1:30 PM IST.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ArbitrageEngine = void 0;
 const config_1 = require("./config");
 const deltaClient_1 = require("./deltaClient");
-const coindcxClient_1 = require("./coindcxClient");
+const coinSwitchClient_1 = require("./coinSwitchClient");
 class ArbitrageEngine {
     deltaClient;
-    coindcxClient;
+    coinswitchClient;
     activeTrades = [];
     constructor() {
         this.deltaClient = new deltaClient_1.DeltaClient();
-        this.coindcxClient = new coindcxClient_1.CoinDCXClient();
+        this.coinswitchClient = new coinSwitchClient_1.CoinSwitchClient();
     }
     /**
      * Get today's and tomorrow's dates in IST (YYYY-MM-DD).
@@ -33,7 +36,7 @@ class ArbitrageEngine {
         return { today, tomorrow, dates: [today, tomorrow] };
     }
     /**
-     * Scan options for a given asset. Returns ATM + OTM comparisons.
+     * Scan options for a given asset. Returns ATM + OTM comparisons with fee deduction.
      */
     async scanOptions(assetKey, expiryFilter) {
         const asset = config_1.ASSETS[assetKey];
@@ -46,45 +49,47 @@ class ArbitrageEngine {
         if (spotPrice <= 0)
             throw new Error(`Could not fetch live spot price for ${asset.symbol}`);
         // Fetch live options from both exchanges
-        const [deltaOpts, coindcxOpts] = await Promise.all([
+        const [deltaOpts, coinswitchOpts] = await Promise.all([
             this.deltaClient.getOptions(asset, targetDates),
-            this.coindcxClient.getOptions(asset, targetDates),
+            this.coinswitchClient.getOptions(asset, targetDates),
         ]);
         // Group options by expiry date
         const expiryGroups = new Map();
         for (const date of targetDates) {
-            expiryGroups.set(date, { delta: [], coindcx: [] });
+            expiryGroups.set(date, { delta: [], coinswitch: [] });
         }
         for (const o of deltaOpts) {
             const group = expiryGroups.get(o.expiryDate);
             if (group)
                 group.delta.push(o);
         }
-        for (const o of coindcxOpts) {
+        for (const o of coinswitchOpts) {
             const group = expiryGroups.get(o.expiryDate);
             if (group)
-                group.coindcx.push(o);
+                group.coinswitch.push(o);
         }
         const results = [];
         for (const [date, group] of expiryGroups) {
-            if (group.delta.length === 0 && group.coindcx.length === 0)
+            if (group.delta.length === 0 && group.coinswitch.length === 0)
                 continue;
             const deltaMap = new Map();
             for (const o of group.delta)
                 deltaMap.set(`${o.strike}_${o.optionType}`, o);
-            const coindcxMap = new Map();
-            for (const o of group.coindcx)
-                coindcxMap.set(`${o.strike}_${o.optionType}`, o);
+            const coinswitchMap = new Map();
+            for (const o of group.coinswitch)
+                coinswitchMap.set(`${o.strike}_${o.optionType}`, o);
             const deltaStrikes = new Set(group.delta.map((o) => o.strike));
-            const coindcxStrikes = new Set(group.coindcx.map((o) => o.strike));
-            const commonStrikes = Array.from(deltaStrikes).filter((s) => coindcxStrikes.has(s)).sort((a, b) => a - b);
+            const coinswitchStrikes = new Set(group.coinswitch.map((o) => o.strike));
+            const commonStrikes = Array.from(deltaStrikes)
+                .filter((s) => coinswitchStrikes.has(s))
+                .sort((a, b) => a - b);
             const allStrikeSet = new Set();
-            for (const o of [...group.delta, ...group.coindcx])
+            for (const o of [...group.delta, ...group.coinswitch])
                 allStrikeSet.add(o.strike);
             const allStrikes = commonStrikes.length >= 2
                 ? commonStrikes
                 : Array.from(allStrikeSet).sort((a, b) => a - b);
-            // Identify ATM Strike
+            // Identify ATM Strike (closest strike to spot)
             let atmStrike = 0;
             let minDiff = Infinity;
             for (const s of allStrikes) {
@@ -103,18 +108,46 @@ class ArbitrageEngine {
             const buildComparison = (strike, optType, category) => {
                 const key = `${strike}_${optType}`;
                 const dOpt = deltaMap.get(key);
-                const cOpt = coindcxMap.get(key);
+                const cOpt = coinswitchMap.get(key);
                 if (!dOpt && !cOpt)
                     return null;
                 const deltaPrice = dOpt?.markPrice || 0;
-                const coindcxPrice = cOpt?.markPrice || 0;
-                const spreadUsd = Math.round((coindcxPrice - deltaPrice) * 100) / 100;
+                const coinswitchPrice = cOpt?.markPrice || 0;
+                const spreadUsd = Math.round((coinswitchPrice - deltaPrice) * 100) / 100;
                 const spreadPct = deltaPrice > 0 ? Math.round(((spreadUsd / deltaPrice) * 100) * 10) / 10 : 0;
-                // Requirement: Suggestion when Short Premium (CoinDCX) >= Long Premium (Delta)
-                const isSuggested = coindcxPrice >= deltaPrice && coindcxPrice > 0 && deltaPrice > 0;
-                // Lot sizing: 0.1 units (CoinDCX: 1 lot = 0.1, Delta: 10 lots = 0.1)
-                const potentialProfitUsd = Math.round(spreadUsd * asset.lotSizeUnits * 100) / 100;
-                const potentialProfitInr = Math.round(potentialProfitUsd * config_1.Config.USD_INR_RATE * 100) / 100;
+                // 1. Gross Profit before fees
+                // 0.1 units notional (CoinSwitch 1 lot = 0.1, Delta 10 lots = 0.1)
+                const grossProfitUsd = Math.round(spreadUsd * asset.lotSizeUnits * 100) / 100;
+                const grossProfitInr = Math.round(grossProfitUsd * config_1.Config.USD_INR_RATE * 100) / 100;
+                // 2. Fee Deductions for Delta Exchange (Long Leg: BUY 0.1 unit)
+                // Delta Exchange rule: 0.05% of notional (spot * 0.1), capped at 10% of premium
+                const deltaNotionalUsd = spotPrice * asset.lotSizeUnits;
+                const deltaPremiumTotalUsd = deltaPrice * asset.lotSizeUnits;
+                const deltaFeeNotionalUsd = deltaNotionalUsd * (config_1.Config.DELTA_FEE_PCT / 100);
+                const deltaFeeCapUsd = deltaPremiumTotalUsd * (config_1.Config.MAX_PREMIUM_FEE_CAP_PCT / 100);
+                const deltaFeeUsd = deltaPrice > 0
+                    ? Math.round(Math.min(deltaFeeNotionalUsd, deltaFeeCapUsd) * 100) / 100
+                    : 0;
+                const deltaFeeInr = Math.round(deltaFeeUsd * config_1.Config.USD_INR_RATE * 100) / 100;
+                // 3. Fee Deductions for CoinSwitch PRO (Short Leg: SELL 0.1 unit)
+                // CoinSwitch PRO rule: 0.05% of notional, capped at 10% of premium
+                const coinswitchNotionalUsd = spotPrice * asset.lotSizeUnits;
+                const coinswitchPremiumTotalUsd = coinswitchPrice * asset.lotSizeUnits;
+                const coinswitchFeeNotionalUsd = coinswitchNotionalUsd * (config_1.Config.COINSWITCH_FEE_PCT / 100);
+                const coinswitchFeeCapUsd = coinswitchPremiumTotalUsd * (config_1.Config.MAX_PREMIUM_FEE_CAP_PCT / 100);
+                const coinswitchFeeUsd = coinswitchPrice > 0
+                    ? Math.round(Math.min(coinswitchFeeNotionalUsd, coinswitchFeeCapUsd) * 100) / 100
+                    : 0;
+                const coinswitchFeeInr = Math.round(coinswitchFeeUsd * config_1.Config.USD_INR_RATE * 100) / 100;
+                // 4. Total Combined Fees
+                const totalFeesUsd = Math.round((deltaFeeUsd + coinswitchFeeUsd) * 100) / 100;
+                const totalFeesInr = Math.round(totalFeesUsd * config_1.Config.USD_INR_RATE * 100) / 100;
+                // 5. Net Profit After Deducting All Fees
+                const netProfitUsd = Math.round((grossProfitUsd - totalFeesUsd) * 100) / 100;
+                const netProfitInr = Math.round(netProfitUsd * config_1.Config.USD_INR_RATE * 100) / 100;
+                // 6. Arbitrage Green Mark Condition:
+                // ONLY marked green (🟢) if Net Profit > 0 after deducting all fees for both exchanges!
+                const isArb = netProfitUsd > 0 && coinswitchPrice > deltaPrice && coinswitchPrice > 0 && deltaPrice > 0;
                 return {
                     strike,
                     optionType: optType,
@@ -128,18 +161,26 @@ class ArbitrageEngine {
                     deltaSymbol: dOpt?.symbol || "",
                     deltaProductId: dOpt?.productId,
                     deltaLots: asset.deltaLots,
-                    coindcxPrice,
-                    coindcxBid: cOpt?.bestBid || 0,
-                    coindcxAsk: cOpt?.bestAsk || 0,
-                    coindcxIv: cOpt?.ivPct || 0,
-                    coindcxSymbol: cOpt?.symbol || "",
-                    coindcxLots: asset.coindcxLots,
+                    coinswitchPrice,
+                    coinswitchBid: cOpt?.bestBid || 0,
+                    coinswitchAsk: cOpt?.bestAsk || 0,
+                    coinswitchIv: cOpt?.ivPct || 0,
+                    coinswitchSymbol: cOpt?.symbol || "",
+                    coinswitchLots: asset.coinswitchLots,
                     underlyingUnits: asset.lotSizeUnits,
                     spreadUsd,
                     spreadPct,
-                    potentialProfitUsd,
-                    potentialProfitInr,
-                    isSuggested,
+                    grossProfitUsd,
+                    grossProfitInr,
+                    deltaFeeUsd,
+                    deltaFeeInr,
+                    coinswitchFeeUsd,
+                    coinswitchFeeInr,
+                    totalFeesUsd,
+                    totalFeesInr,
+                    netProfitUsd,
+                    netProfitInr,
+                    isArb,
                 };
             };
             const atmCalls = [];
@@ -171,21 +212,22 @@ class ArbitrageEngine {
                     allComparisons.push(comp);
                 }
             }
-            const suggestedTrades = allComparisons
-                .filter((c) => c.isSuggested)
-                .sort((a, b) => b.spreadPct - a.spreadPct);
+            // Filter only true green mark arbitrage opportunities (Net Profit > 0 after fees)
+            const arbOpportunities = allComparisons
+                .filter((c) => c.isArb)
+                .sort((a, b) => b.netProfitUsd - a.netProfitUsd);
             results.push({
                 underlying: asset.symbol,
                 spotPrice,
                 atmStrike,
                 expiryDate: date,
-                expiryLabel: group.delta.length > 0 ? "5:30 PM IST (Delta)" : "1:30 PM IST (CoinDCX)",
+                expiryLabel: `${date} 1:30 PM IST (Cutoff)`,
                 atmCalls,
                 atmPuts,
                 otmCalls,
                 otmPuts,
                 allStrikes: allComparisons,
-                suggestedTrades,
+                arbOpportunities,
             });
         }
         return results;
@@ -193,7 +235,7 @@ class ArbitrageEngine {
     /**
      * Execute LIVE Arbitrage Trade:
      *  - Delta Exchange: BUY (LONG) 10 lots (= 0.1 units)
-     *  - CoinDCX: SELL (SHORT) 1 lot (= 0.1 units)
+     *  - CoinSwitch PRO: SELL (SHORT) 1 lot (= 0.1 units)
      */
     async executeTrade(assetKey, strike) {
         const asset = config_1.ASSETS[assetKey];
@@ -211,30 +253,34 @@ class ArbitrageEngine {
             deltaProductId: strike.deltaProductId,
             deltaSide: "buy",
             deltaLots: asset.deltaLots,
-            coindcxSymbol: strike.coindcxSymbol,
-            coindcxSide: "sell",
-            coindcxLots: asset.coindcxLots,
+            coinswitchSymbol: strike.coinswitchSymbol,
+            coinswitchSide: "sell",
+            coinswitchLots: asset.coinswitchLots,
+            grossProfitUsd: strike.grossProfitUsd,
+            totalFeesUsd: strike.totalFeesUsd,
+            netProfitUsd: strike.netProfitUsd,
+            netProfitInr: strike.netProfitInr,
             status: "pending",
         };
         try {
-            const [deltaResult, coindcxResult] = await Promise.all([
+            const [deltaResult, coinswitchResult] = await Promise.all([
                 // Delta LIVE order: BUY 10 lots
                 this.deltaClient.placeBuyOrder(strike.deltaProductId, strike.deltaSymbol, asset.deltaLots),
-                // CoinDCX LIVE order: SELL 1 lot
-                this.coindcxClient.placeSellOrder(strike.coindcxSymbol, asset.coindcxLots),
+                // CoinSwitch LIVE order: SELL 1 lot
+                this.coinswitchClient.placeSellOrder(strike.coinswitchSymbol, asset.coinswitchLots),
             ]);
             trade.deltaOrderResult = deltaResult;
-            trade.coindcxOrderResult = coindcxResult;
-            if (deltaResult.success && coindcxResult.success) {
+            trade.coinswitchOrderResult = coinswitchResult;
+            if (deltaResult.success && coinswitchResult.success) {
                 trade.status = "filled";
             }
-            else if (deltaResult.success || coindcxResult.success) {
+            else if (deltaResult.success || coinswitchResult.success) {
                 trade.status = "partial";
-                trade.error = `Delta: ${deltaResult.message} | CoinDCX: ${coindcxResult.message}`;
+                trade.error = `Delta: ${deltaResult.message} | CoinSwitch: ${coinswitchResult.message}`;
             }
             else {
                 trade.status = "failed";
-                trade.error = `Delta: ${deltaResult.message} | CoinDCX: ${coindcxResult.message}`;
+                trade.error = `Delta: ${deltaResult.message} | CoinSwitch: ${coinswitchResult.message}`;
             }
         }
         catch (err) {
@@ -248,32 +294,32 @@ class ArbitrageEngine {
      * Fetch LIVE Net PnL from open positions across both exchanges.
      */
     async getLiveNetPnl() {
-        const [deltaPositions, coindcxPositions] = await Promise.all([
+        const [deltaPositions, coinswitchPositions] = await Promise.all([
             this.deltaClient.getOpenPositions(),
-            this.coindcxClient.getOpenPositions(),
+            this.coinswitchClient.getOpenPositions(),
         ]);
         let deltaUnrealizedUsd = 0;
         for (const p of deltaPositions) {
             deltaUnrealizedUsd += p.unrealizedPnlUsd;
         }
-        let coindcxUnrealizedUsd = 0;
-        for (const p of coindcxPositions) {
-            coindcxUnrealizedUsd += p.unrealizedPnlUsd;
+        let coinswitchUnrealizedUsd = 0;
+        for (const p of coinswitchPositions) {
+            coinswitchUnrealizedUsd += p.unrealizedPnlUsd;
         }
-        const totalUnrealizedUsd = Math.round((deltaUnrealizedUsd + coindcxUnrealizedUsd) * 100) / 100;
+        const totalUnrealizedUsd = Math.round((deltaUnrealizedUsd + coinswitchUnrealizedUsd) * 100) / 100;
         const totalUnrealizedInr = Math.round(totalUnrealizedUsd * config_1.Config.USD_INR_RATE * 100) / 100;
         const deltaUnrealizedInr = Math.round(deltaUnrealizedUsd * config_1.Config.USD_INR_RATE * 100) / 100;
-        const coindcxUnrealizedInr = Math.round(coindcxUnrealizedUsd * config_1.Config.USD_INR_RATE * 100) / 100;
-        const totalPositionsCount = deltaPositions.length + coindcxPositions.length;
+        const coinswitchUnrealizedInr = Math.round(coinswitchUnrealizedUsd * config_1.Config.USD_INR_RATE * 100) / 100;
+        const totalPositionsCount = deltaPositions.length + coinswitchPositions.length;
         const isFlat = totalPositionsCount === 0;
         return {
             timestamp: new Date(),
             deltaPositions,
-            coindcxPositions,
+            coinswitchPositions,
             deltaUnrealizedUsd: Math.round(deltaUnrealizedUsd * 100) / 100,
             deltaUnrealizedInr,
-            coindcxUnrealizedUsd: Math.round(coindcxUnrealizedUsd * 100) / 100,
-            coindcxUnrealizedInr,
+            coinswitchUnrealizedUsd: Math.round(coinswitchUnrealizedUsd * 100) / 100,
+            coinswitchUnrealizedInr,
             totalUnrealizedUsd,
             totalUnrealizedInr,
             isFlat,
@@ -284,18 +330,18 @@ class ArbitrageEngine {
      * Fetch LIVE Wallet Balances across both exchanges.
      */
     async getLiveWalletBalances() {
-        const [delta, coindcx] = await Promise.all([
+        const [delta, coinswitch] = await Promise.all([
             this.deltaClient.getWalletBalance(),
-            this.coindcxClient.getWalletBalance(),
+            this.coinswitchClient.getWalletBalance(),
         ]);
-        const totalBalanceUsd = Math.round((delta.balanceUsd + coindcx.balanceUsd) * 100) / 100;
+        const totalBalanceUsd = Math.round((delta.balanceUsd + coinswitch.balanceUsd) * 100) / 100;
         const totalBalanceInr = Math.round(totalBalanceUsd * config_1.Config.USD_INR_RATE * 100) / 100;
-        const totalAvailableUsd = Math.round((delta.availableUsd + coindcx.availableUsd) * 100) / 100;
+        const totalAvailableUsd = Math.round((delta.availableUsd + coinswitch.availableUsd) * 100) / 100;
         const totalAvailableInr = Math.round(totalAvailableUsd * config_1.Config.USD_INR_RATE * 100) / 100;
         return {
             timestamp: new Date(),
             delta,
-            coindcx,
+            coinswitch,
             totalBalanceUsd,
             totalBalanceInr,
             totalAvailableUsd,
@@ -306,16 +352,16 @@ class ArbitrageEngine {
      * Close ALL positions on both exchanges.
      */
     async closeAllPositions() {
-        const [deltaClose, coindcxClose] = await Promise.all([
+        const [deltaClose, coinswitchClose] = await Promise.all([
             this.deltaClient.closeAllPositions(),
-            this.coindcxClient.closeAllPositions(),
+            this.coinswitchClient.closeAllPositions(),
         ]);
         for (const t of this.activeTrades) {
             if (t.status === "filled" || t.status === "partial") {
                 t.status = "closed";
             }
         }
-        return { delta: deltaClose, coindcx: coindcxClose };
+        return { delta: deltaClose, coinswitch: coinswitchClose };
     }
 }
 exports.ArbitrageEngine = ArbitrageEngine;

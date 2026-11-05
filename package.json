@@ -8,6 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "prod": "node dist/index.js",
+    "demo-coinswitch": "tsx scripts/demoTradeCoinSwitch.ts",
     "demo-coindcx": "tsx scripts/demoTradeCoinDCX.ts"
   },
   "keywords": [
