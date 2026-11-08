@@ -1,126 +1,174 @@
-# Options IV Arbitrage Algorithm (TypeScript & Node.js)
+# Automated Gold Trend + Grid Hedging Trading Bot (Delta Exchange India)
 
-An automated crypto options scanning and arbitrage algorithm with **Telegram Bot integration**, implemented in **TypeScript and Node.js**, designed for **Implied Volatility (IV) Mispricing Arbitrage** between **Delta Exchange** and **CoinSwitch PRO**.
-
----
-
-## 📌 Strategy Explained
-
-### 1. The Core Mispricing Anomaly
-| Metric | Exchange 1: Delta Exchange | Exchange 2: CoinSwitch PRO |
-| :--- | :--- | :--- |
-| **Daily Expiry Time** | **5:30 PM IST** (12:00 UTC) | **1:30 PM IST** (08:00 UTC) |
-| **Duration Difference** | **+4 extra hours** to expiry | **-4 fewer hours** to expiry |
-| **Theoretical Value** | Must be **HIGHER** (more $\theta$ time value) | Must be **LOWER** (less $\theta$ time value) |
-
-Under standard Black-Scholes / option pricing theory, an option that expires **4 hours later** has more time value ($\theta$) and must trade at a higher price than an option that expires earlier for the identical underlying asset and strike.
-
-### 2. The Arbitrage Rule: `CoinSwitch Value ≥ Delta Exchange Value`
-Whenever:
-$$\text{CoinSwitch Option Price} \ge \text{Delta Exchange Option Price}$$
-CoinSwitch’s Implied Volatility (IV) is significantly inflated and overpriced.
-* **The Play:** 
-  - **SELL** the overpriced CoinSwitch option (higher premium, decays faster, settles at 1:30 PM IST).
-  - *(Optional / Box Hedge)* **BUY** the cheaper Delta option (lower premium, extra 4 hours of protection until 5:30 PM IST).
-  - Collect the net credit spread with positive expected value (EV)!
-
-### 3. The Daily 1:30 PM IST Trade Cycle
-* **1:30 PM IST Daily:** 
-  1. Yesterday’s CoinSwitch trade expires and automatically settles. Close or verify settlement.
-  2. The algorithm automatically triggers an alert on Telegram with the top next-day mispriced strikes.
-  3. Re-enter the new position for next day’s 1:30 PM expiry.
+A production-grade, quantitative algorithmic trading bot engineered for **Delta Exchange India** (`https://api.india.delta.exchange`), implementing a high-capacity **4-Hour Supertrend + Grid Averaging + Dynamic Opposite-Instrument Hedging** strategy.
 
 ---
 
-## ⚖️ Fund Imbalance & Transfer Alerts
+## 📌 Strategy Architecture
 
-When trading across two separate exchanges, profits accumulate unevenly, or margin requirements shift:
-* The algorithm continuously tracks wallet balances across **both Delta Exchange and CoinSwitch**.
-* If one account holds significantly more funds than the other (e.g. difference $\ge 25\%$):
-  - **Urgent Telegram Alert** is triggered automatically:
-  ```text
-  ⚠️ FUND IMBALANCE ALERT ⚠️
-  Delta Exchange : $1,600 (₹1,38,400) [80%]
-  CoinSwitch     : $400   (₹34,600)   [20%]
-  
-  👉 ACTION REQUIRED:
-  Transfer ~$600 (₹51,900) from Delta Exchange to CoinSwitch to equalize margin for arbitrage!
-  ```
+The strategy combines trend-following directional momentum on physical gold contracts with adverse grid dollar-cost averaging and independent opposite-instrument hedging for sideways market alpha.
+
+```
+       [ 4-Hour Completed Candle ]
+                   │
+         [ Supertrend Indicator ]
+          (ATR: 10, Multiplier: 3)
+                   │
+       ┌───────────┴───────────┐
+       ▼                       ▼
+    [ BULLISH ]             [ BEARISH ]
+       │                       │
+ 50% Initial Entry       50% Initial Entry
+  (LONG $500 XAUT)        (SHORT $500 XAUT)
+       │                       │
+  5 Adverse Grids         5 Adverse Grids
+   (-0.5% each)            (+0.5% each)
+       │                       │
+       └───────────┬───────────┘
+                   │
+       [ Real-Time Price Monitor ]
+                   │
+    ┌──────────────┴──────────────┐
+    ▼                             ▼
+Adverse Movement            Favorable Movement (+1% steps)
+(Triggers Grid Orders)      (Triggers Opposite Hedge in PAXGUSD)
+                                  │
+                       [ Independent 1% Take-Profit ]
+                       (Book Profit & Keep Primary Open)
+```
+
+### 1. Delta Exchange India Instruments
+Dynamically verified and discovered via Delta India REST API (`/v2/products`):
+- **Primary Trend Instrument**: `XAUTUSD` (Product ID: `131253`)
+  - Perpetual futures contract settled in USD.
+  - Contract Value: `0.001` oz (~$4.00 per contract).
+  - Tick size: `0.01`.
+- **Secondary Hedge Instrument**: `PAXGUSD` (Product ID: `123006`)
+  - Perpetual futures contract settled in USD.
+  - Contract Value: `0.001` oz (~$4.00 per contract).
+  - Tick size: `0.01`.
+
+*Note: Dual-instrument hedging cleanly separates primary and hedge positions onto distinct contracts, eliminating position-netting conflicts on Delta Exchange.*
+
+### 2. Five Core Strategy Components
+1. **4-Hour Supertrend Trend Detection**:
+   - Calculated strictly on completed 4h candles (`ATR 10`, `Multiplier 3.0`).
+   - Prevents duplicate signals by persisting `last_processed_candle` timestamp in SQLite.
+   - Zero lookahead bias.
+2. **50% Initial Position Entry**:
+   - Total planned primary notional: $1,000.
+   - On new Supertrend signal: opens 50% ($500 notional) immediately.
+   - Reserves 50% ($500) for grid limit orders.
+3. **5-Level Adverse Grid System**:
+   - Places limit orders every 0.5% adverse movement ($100 per grid level).
+   - LONG: `ref * (1 - 0.005 * i)` (e.g. 99,500, 99,000, 98,500, 98,000, 97,500).
+   - SHORT: `ref * (1 + 0.005 * i)` (e.g. 100,500, 101,000, 101,500, 102,000, 102,500).
+   - Recalculates weighted average entry price upon fill.
+4. **Opposite-Instrument Hedging (Every +1% Favorable Movement)**:
+   - When Primary moves favorably by every 1%, opens an opposite-direction hedge in `PAXGUSD`.
+   - Primary LONG -> Opens SHORT hedge on `PAXGUSD` ($100 notional).
+   - Primary SHORT -> Opens LONG hedge on `PAXGUSD` ($100 notional).
+   - Idempotent tracking per level ($1, 2, 3, \dots$) prevents duplicate entries.
+5. **Independent 1% Hedge Profit Booking**:
+   - Each hedge has an independent 1% take-profit target:
+     - SHORT hedge TP: `entryPrice * (1 - 0.01)`
+     - LONG hedge TP: `entryPrice * (1 + 0.01)`
+   - When reached: closes the hedge, books realized P&L, records fees, and **keeps the primary position open**.
+6. **Supertrend Reversal Protocol**:
+   - Cancels all pending grid limit orders.
+   - Closes open hedges and books P&L.
+   - Closes previous primary position.
+   - Resets reference price and begins the new trend cycle in the opposite direction.
 
 ---
 
-## 🤖 Telegram Bot Commands
+## 🛡️ Risk Management System
 
-Send any of these messages to your Telegram bot:
-
-| Command | Action |
-| :--- | :--- |
-| `options` or `/options` | Scans Delta & CoinSwitch options and returns **ATM**, **OTM Calls**, **OTM Puts**, and highlights **CoinSwitch $\ge$ Delta** arbitrage signals. |
-| `arb` or `/arb` | Filters and displays **ONLY** active arbitrage signals where CoinSwitch $\ge$ Delta. |
-| `balance` or `/balance` | Checks wallet equity on both exchanges and shows fund balance status & transfer suggestions. |
-| `trade` or `/trade` | Displays the 1:30 PM IST rollover execution checklist and countdown timer. |
-| `status` or `/status` | Shows live BTC spot price, exchange connectivity status, and bot health. |
-| `help` or `/help` | Displays available commands and strategy rules. |
+Rigorous safety controls enforced before every order:
+- **Max Primary Notional**: $2,000 cap.
+- **Max Hedge Notional**: $1,000 cap.
+- **Max Total Exposure**: $3,000 cap.
+- **Max Daily Loss**: $150 limit (triggers automatic Emergency Stop).
+- **Max Drawdown**: 15% limit (triggers Emergency Stop).
+- **Max Margin Utilization**: 70% threshold.
+- **Max Open Hedges**: 10 simultaneous hedges.
+- **Automated REST Reconciliation**: Synchronizes SQLite orders and positions with Delta Exchange.
 
 ---
 
-## 🚀 Quick Setup Guide (TypeScript / Node.js)
+## 🛠️ Technology Stack
 
-### Step 1: Install Dependencies
+- **Runtime**: Node.js + TypeScript (Strict Mode)
+- **Exchange API**: Delta Exchange India REST API & WebSocket API (`wss://socket.india.delta.exchange`)
+- **Database**: SQLite via `better-sqlite3` (WAL mode enabled, prepared statements, zero ORM bloat)
+- **Financial Math**: `Decimal.js` (28-digit precision, no floating-point rounding errors)
+- **Validation**: `Zod`
+- **Testing**: `Vitest`
+- **Logging**: `Pino` with `pino-pretty`
+
+---
+
+## 🚀 Getting Started
+
+### 1. Installation
 ```bash
 npm install
 ```
 
-### Step 2: Configure `.env`
-Copy `.env.example` to `.env`:
-```bash
-cp .env.example .env
-```
-Fill in your credentials:
-1. **Telegram:**
-   - Message `@BotFather` on Telegram to create a bot and copy your `TELEGRAM_BOT_TOKEN`.
-   - Message `@userinfobot` to get your numeric `TELEGRAM_CHAT_ID`.
-2. **Delta Exchange:**
-   - Add `DELTA_API_KEY` and `DELTA_API_SECRET`.
-3. **CoinSwitch PRO:**
-   - Add `COINSWITCH_API_KEY` and `COINSWITCH_SECRET_KEY` (Ed25519 hex).
+### 2. Environment Configuration
+Copy `.env.example` to `.env` and configure your credentials:
+```env
+DELTA_API_KEY=your_delta_india_api_key
+DELTA_API_SECRET=your_delta_india_api_secret
+DELTA_BASE_URL=https://api.india.delta.exchange
+DELTA_WS_URL=wss://socket.india.delta.exchange
 
-### Step 3: Test Integration (NPM Scripts)
-```bash
-# 1. Test options scanner & arbitrage detection
-npm run scan
-
-# 2. Test wallet balance check & imbalance monitor
-npm run balance
-
-# 3. Test Telegram push notification
-npm run test-telegram
+TRADING_MODE=PAPER # Options: PAPER | LIVE | BACKTEST
 ```
 
-### Step 4: Run the Algorithm Service
+### 3. Run the Backtest
+Pulls historical 4h candles from Delta Exchange India and runs the full simulation:
 ```bash
-# Development (with live tsx execution)
+npm run backtest
+```
+
+### 4. Run the Unit Test Suite
+Executes 22 automated unit tests across indicators, arithmetic, database, and risk controls:
+```bash
+npm test
+```
+
+### 5. Build and Start the Trading Bot
+```bash
+# Development (with tsx hot-reloading)
 npm start
 
 # Or compile to JavaScript and run in production
 npm run build
 npm run prod
-
-# Production on Linux VM (PM2 daemon)
-pm2 start ecosystem.config.js
 ```
 
 ---
 
-## 🔄 CI/CD & GitHub Actions Workflow
+## 📊 Web Dashboard & REST API
 
-The repository includes an automated GitHub Actions workflow in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml):
-1. **Build & Typecheck:** Automatically checks code, runs `npm ci`, and verifies TypeScript compiles without errors on push / PR.
-2. **Automated VM Deployment:** On push to `master`, connects via SSH to your VM and runs `~/deploy-options.sh` to update, build, and reload the PM2 process.
+The bot includes an embedded HTTP server and real-time WebSocket dashboard accessible at:
+```
+http://localhost:3000
+```
 
-A ready-to-use VM deployment script is provided at [`scripts/deploy.sh`](scripts/deploy.sh) along with [`ecosystem.config.js`](ecosystem.config.js).
+### REST Endpoints:
+- `GET /api/status`: Overall engine status, current trend direction, uptime.
+- `GET /api/strategy`: Full strategy state, configuration, and portfolio snapshot.
+- `GET /api/positions`: Primary and open hedge positions.
+- `GET /api/orders`: Active grid limit orders and recent executions.
+- `GET /api/trades`: Trade history with realized PnL and fees.
+- `GET /api/performance`: Daily and cumulative metrics.
+- `GET /api/risk`: Risk limits, exposure, margin utilization, and risk events.
 
-The algorithm will:
-1. Listen 24/7 on Telegram for user commands like `options` and `balance`.
-2. Automatically check account balances every 30 minutes and alert you if funds become imbalanced.
-3. Automatically fire daily rollover alerts at **1:30 PM IST** to close yesterday's trade and enter the next day's trade.
+### Control Endpoints:
+- `POST /api/strategy/start`: Starts engine and WebSocket feed.
+- `POST /api/strategy/pause`: Pauses order generation.
+- `POST /api/strategy/resume`: Resumes paused strategy.
+- `POST /api/strategy/stop`: Gracefully stops and cancels pending orders.
+- `POST /api/strategy/kill`: Immediate emergency kill switch.

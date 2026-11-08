@@ -1,47 +1,88 @@
 /**
- * Main entry point for the Options Arbitrage Bot (LIVE ONLY).
- * Delta Exchange (Long) ↔ CoinSwitch PRO (Short).
+ * Delta Exchange India - Gold Trend + Grid Hedging Bot
+ * Main Application Entry Point
  */
 
-import { Config } from "./config";
-import { ArbTelegramBot } from "./telegramBot";
+import { initializeDatabase } from './database/initialize';
+import { closeDatabase } from './database/connection';
+import { DeltaClient } from './exchange/delta.client';
+import { DeltaWebSocketClient } from './exchange/delta.websocket';
+import { ProductsService } from './exchange/products.service';
+import { StrategyEngine } from './strategy/strategy.engine';
+import { ApiServer } from './api/server';
+import { defaultStrategyConfig, defaultRiskLimits } from './config/strategy.config';
+import { env } from './config/env';
+import { logger } from './monitoring/logger';
+import { alerts } from './monitoring/alerts';
 
-async function main() {
-  console.log("============================================================");
-  console.log("  OPTIONS ARBITRAGE BOT (LIVE DIRECT TRADING)");
-  console.log("  Delta Exchange (Long) ↔ CoinSwitch PRO (Short)");
-  console.log("============================================================");
-  console.log(`  Mode: LIVE (Simulations Disabled)`);
-  console.log(`  Telegram: ${Config.TELEGRAM_ENABLED ? "ENABLED" : "DISABLED"}`);
-  console.log(`  Pricing: Pure Spread & Profit (No Fee Deduction)`);
-  console.log(`  Arb Signal: Green Mark (🟢) when Short Premium >= Long Premium`);
-  console.log(`  Auto-Close: 1:30 PM IST daily (08:00 UTC)`);
-  console.log(`  Assets: BTC, ETH, XAUTUSDT`);
-  console.log("============================================================");
+async function bootstrap() {
+  logger.info('========================================================');
+  logger.info('  DELTA EXCHANGE INDIA - GOLD TREND + GRID HEDGING BOT  ');
+  logger.info('========================================================');
 
-  if (!Config.TELEGRAM_BOT_TOKEN) {
-    console.error("❌ TELEGRAM_BOT_TOKEN not set in .env! Exiting.");
+  // 1. Initialize SQLite Database
+  logger.info('Initializing SQLite database with WAL mode...');
+  initializeDatabase();
+
+  // 2. Instantiate Delta Exchange REST and WebSocket Clients
+  const deltaClient = new DeltaClient();
+  const wsClient = new DeltaWebSocketClient();
+
+  // 3. Dynamic Product Discovery & Verification (Section 2)
+  const productsService = new ProductsService(deltaClient);
+  try {
+    await productsService.verifyGoldProducts(
+      defaultStrategyConfig.primaryInstrument,
+      defaultStrategyConfig.hedgeInstrument
+    );
+  } catch (err: any) {
+    logger.error({ err: err.message }, 'Product verification failed');
     process.exit(1);
   }
 
-  const bot = new ArbTelegramBot();
-  await bot.startPolling();
+  // 4. Instantiate Strategy Engine
+  const strategyEngine = new StrategyEngine(
+    defaultStrategyConfig,
+    defaultRiskLimits,
+    deltaClient,
+    wsClient
+  );
 
-  // Graceful shutdown
-  process.on("SIGINT", () => {
-    console.log("\nShutting down bot gracefully...");
-    bot.stop();
-    process.exit(0);
-  });
+  // 5. Instantiate and Start REST API & WebSocket Dashboard Server
+  const port = parseInt(process.env.PORT || '3000', 10);
+  const apiServer = new ApiServer(strategyEngine, port);
+  await apiServer.start();
 
-  process.on("SIGTERM", () => {
-    console.log("\nShutting down bot gracefully...");
-    bot.stop();
-    process.exit(0);
-  });
+  // 6. Start the Strategy Engine (Default: PAPER mode)
+  logger.info({ mode: defaultStrategyConfig.mode }, `Starting Strategy Engine in ${defaultStrategyConfig.mode} mode...`);
+  await strategyEngine.start();
+
+  logger.info(`Trading bot is fully operational.`);
+  logger.info(`Web Dashboard & REST API: http://localhost:${port}`);
+
+  // Graceful Shutdown Handlers
+  const shutdown = async (signal: string) => {
+    logger.info({ signal }, `Received ${signal}. Performing graceful shutdown...`);
+    try {
+      await strategyEngine.stop();
+      await apiServer.stop();
+      wsClient.disconnect();
+      closeDatabase();
+      logger.info('Shutdown complete. Goodbye.');
+      process.exit(0);
+    } catch (err: any) {
+      logger.error({ err: err.message }, 'Error during shutdown');
+      process.exit(1);
+    }
+  };
+
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
-main().catch((err) => {
-  console.error("Fatal error:", err);
+bootstrap().catch((err) => {
+  logger.error({ err: err.message, stack: err.stack }, 'Fatal application bootstrap error');
+  alerts.critical('BOOTSTRAP_FAILURE', `Bot crashed on startup: ${err.message}`);
   process.exit(1);
 });
+

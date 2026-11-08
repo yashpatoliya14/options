@@ -1,35 +1,44 @@
 {
-  "name": "options-arbitrage-bot",
-  "version": "2.0.0",
-  "description": "Live Crypto Options Arbitrage (Delta Exchange Long vs CoinDCX Short) with Interactive Telegram Bot",
+  "name": "delta-gold-trend-grid-hedging-bot",
+  "version": "1.0.0",
+  "description": "Automated Gold Trend + Grid Hedging Trading Bot for Delta Exchange India",
   "main": "dist/index.js",
   "scripts": {
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "prod": "node dist/index.js",
-    "demo-coinswitch": "tsx scripts/demoTradeCoinSwitch.ts",
-    "demo-coindcx": "tsx scripts/demoTradeCoinDCX.ts"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:order": "tsx scripts/testOrder.ts",
+    "backtest": "tsx src/backtest/run-backtest.ts"
   },
   "keywords": [
-    "crypto",
-    "options",
-    "delta-exchange",
-    "coindcx",
-    "arbitrage",
-    "telegram-bot"
+    "algorithmic-trading",
+    "delta-exchange-india",
+    "gold-trading",
+    "supertrend",
+    "grid-hedging",
+    "quantitative"
   ],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "axios": "^1.7.9",
+    "better-sqlite3": "^13.0.3",
+    "decimal.js": "^10.6.0",
     "dotenv": "^16.4.7",
-    "node-cron": "^4.6.0"
+    "pino": "^10.4.0",
+    "pino-pretty": "^13.2.0",
+    "ws": "^8.22.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.10.2",
-    "@types/node-cron": "^3.0.11",
+    "@types/ws": "^8.18.2",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^5.1.0"
   }
 }
