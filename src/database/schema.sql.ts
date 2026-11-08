@@ -184,3 +184,4 @@ CREATE TABLE IF NOT EXISTS execution_logs (
   created_at TEXT NOT NULL
 );
 `;
+
