@@ -160,9 +160,10 @@ export class GridService {
   /**
    * Cancel all open grid orders
    */
-  public async cancelGridOrders(): Promise<void> {
-    await this.executor.cancelAllOpenGridOrders(this.strategyId);
+  public async cancelGridOrders(): Promise<number> {
+    const cancelledCount = await this.executor.cancelAllOpenGridOrders(this.strategyId);
     this.gridRepo.clearGridLevels(this.strategyId);
+    return cancelledCount;
   }
 
   /**

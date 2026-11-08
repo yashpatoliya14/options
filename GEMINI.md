@@ -12,3 +12,4 @@ Before diagnosing bugs, modifying strategy logic, or answering questions about t
 2. **Completed Candles Only**: 4-hour Supertrend (`ATR 10, Multiplier 3.0`) evaluates completed candles only.
 3. **Single Exchange**: Operates strictly on Delta Exchange India (`https://api.india.delta.exchange`).
 4. **Verification**: Always run `npm run build` and `npm test` before concluding any fix.
+

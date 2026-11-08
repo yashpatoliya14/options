@@ -219,6 +219,61 @@ export class DeltaExchangeClient {
   }
 
   /**
+   * Cancel all open orders for a specific product (or all products)
+   */
+  public async cancelAllOrders(productId?: number): Promise<number> {
+    let cancelledCount = 0;
+
+    // 1. Fetch current open orders to track and cancel explicitly
+    try {
+      const openOrders = await this.getOpenOrders(productId);
+      for (const order of openOrders) {
+        const ok = await this.cancelOrder(order.product_id, order.id);
+        if (ok) cancelledCount++;
+      }
+    } catch (err: any) {
+      logger.warn({ error: err.message }, 'Failed to fetch open orders for individual cancellation');
+    }
+
+    // 2. Also send bulk cancel endpoint if available on Delta
+    const path = '/v2/orders/all';
+    const body: any = {};
+    if (productId) body.product_id = Number(productId);
+    const headers = DeltaAuth.sign(this.apiKey, this.apiSecret, 'DELETE', path, body);
+
+    try {
+      await this.http.delete(path, { data: body, headers });
+    } catch {
+      // Bulk cancellation endpoint may not be implemented for all products, individual loop already executed
+    }
+
+    return cancelledCount;
+  }
+
+  /**
+   * Immediately close an open position with a market order using reduce_only: true
+   */
+  public async closePositionMarket(productId: number, size: number): Promise<DeltaOrderResponse | null> {
+    if (!size || size === 0) return null;
+
+    const absSize = Math.abs(size);
+    const side: 'buy' | 'sell' = size > 0 ? 'sell' : 'buy';
+
+    logger.info(
+      { productId, size, closingSide: side, contracts: absSize },
+      'Submitting market reduce_only order to flatten position on Delta'
+    );
+
+    return this.placeOrder({
+      product_id: productId,
+      size: absSize,
+      side,
+      order_type: 'market_order',
+      reduce_only: true,
+    });
+  }
+
+  /**
    * Get specific order status
    */
   public async getOrderStatus(arg1: number | string, arg2?: string | number): Promise<DeltaOrderResponse> {

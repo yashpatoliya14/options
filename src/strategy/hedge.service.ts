@@ -10,6 +10,7 @@ import { HedgePositionState, PositionSide, TrendDirection } from '../types/strat
 import { InternalOrder } from '../types/order.types';
 import { logger } from '../monitoring/logger';
 import { alerts } from '../monitoring/alerts';
+import { telegram } from '../monitoring/telegram';
 
 export class HedgeService {
   private executor: OrderExecutor;
@@ -183,6 +184,17 @@ export class HedgeService {
       `Level ${level}: ${hedgeSide} ${quantityContracts} contracts on ${this.hedgeSymbol} @ ${fillPrice}, Target: ${targetPrice}`
     );
 
+    telegram.notifyHedgeOpened({
+      symbol: this.hedgeSymbol,
+      level,
+      side: orderSide,
+      lots: quantityContracts,
+      entryPrice: fillPrice,
+      targetPrice,
+      triggerPct: this.hedgeTriggerPercent,
+      primaryPrice: currentPrimaryPrice,
+    }).catch(() => {});
+
     return hedgeState;
   }
 
@@ -270,6 +282,14 @@ export class HedgeService {
       'Hedge Profit Booked',
       `Hedge Level ${hedge.triggerLevel} hit target ${exitPrice}! Realized P&L: +$${realizedPnl.toFixed(2)}. Primary position preserved.`
     );
+
+    telegram.notifyHedgeTakeProfit({
+      symbol: this.hedgeSymbol,
+      level: hedge.triggerLevel,
+      exitPrice,
+      realizedPnl,
+      fees,
+    }).catch(() => {});
   }
 
   /**

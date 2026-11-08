@@ -11,6 +11,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:order": "tsx scripts/testOrder.ts",
+    "test:telegram": "tsx scripts/testTelegram.ts",
+    "flatten": "tsx scripts/emergencyFlatten.ts",
+    "emergency:flatten": "tsx scripts/emergencyFlatten.ts",
     "backtest": "tsx src/backtest/run-backtest.ts"
   },
   "keywords": [

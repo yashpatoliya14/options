@@ -150,8 +150,20 @@ export class ApiServer {
         }
 
         if (pathname === '/api/strategy/kill') {
-          this.engine.kill().catch((err) => logger.error({ err }, 'Kill failed'));
-          return sendJson(200, { success: true, message: 'Emergency kill switch executed' });
+          this.engine.emergencyFlatten('API Emergency Kill Triggered').catch((err) => logger.error({ err }, 'Kill failed'));
+          return sendJson(200, { success: true, message: 'Emergency kill & flatten executed' });
+        }
+
+        if (pathname === '/api/strategy/flatten') {
+          this.engine.emergencyFlatten('Manual Emergency Flatten Triggered')
+            .then((result) => {
+              sendJson(200, { success: true, message: result.message, result });
+            })
+            .catch((err) => {
+              logger.error({ err }, 'Emergency flatten failed');
+              sendJson(500, { success: false, error: err.message });
+            });
+          return;
         }
       }
 
@@ -370,7 +382,7 @@ export class ApiServer {
     <button class="btn-pause" onclick="sendAction('pause')">⏸ PAUSE</button>
     <button class="btn-resume" onclick="sendAction('resume')">⏯ RESUME</button>
     <button class="btn-stop" onclick="sendAction('stop')">⏹ STOP</button>
-    <button class="btn-kill" onclick="sendAction('kill')">⚠ EMERGENCY KILL</button>
+    <button class="btn-kill" onclick="sendAction('flatten')">🚨 EMERGENCY FLATTEN</button>
   </div>
 
   <div class="grid-container">

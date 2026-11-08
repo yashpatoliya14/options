@@ -20,6 +20,7 @@ import { StrategyConfig, RiskLimits, StrategyStatus, TradingMode, TrendDirection
 import { Precision } from '../utils/precision';
 import { logger } from '../monitoring/logger';
 import { alerts } from '../monitoring/alerts';
+import { telegram } from '../monitoring/telegram';
 
 export class StrategyEngine extends EventEmitter {
   private config: StrategyConfig;
@@ -243,13 +244,117 @@ export class StrategyEngine extends EventEmitter {
    * Kill strategy immediately (emergency)
    */
   public async kill(): Promise<void> {
+    await this.emergencyFlatten('Manual Kill Triggered');
+  }
+
+  /**
+   * Emergency Flatten: Cancels all open orders on Delta Exchange India and locally,
+   * closes all open positions with reduce_only market orders,
+   * transitions strategy status to KILLED, and dispatches critical alerts to Telegram.
+   */
+  public async emergencyFlatten(reason: string = 'Emergency Flatten Command'): Promise<{
+    success: boolean;
+    cancelledOrdersCount: number;
+    closedPositions: { symbol: string; size: number }[];
+    message: string;
+  }> {
+    logger.error({ reason, strategyId: this.config.id }, '🚨 EXECUTING EMERGENCY FLATTEN');
+
     this.status = 'KILLED';
-    this.riskManager.triggerEmergencyStop('Manual Kill Triggered');
+    this.riskManager.triggerEmergencyStop(reason);
     this.stopBackgroundLoops();
-    await this.gridService.cancelGridOrders();
+
+    const closedPositions: { symbol: string; size: number }[] = [];
+    let totalCancelledOrders = 0;
+
+    // 1. Cancel local pending grid orders
+    try {
+      const localCancelled = await this.gridService.cancelGridOrders();
+      totalCancelledOrders += (localCancelled || 0);
+    } catch (err: any) {
+      logger.warn({ err: err.message }, 'Error cancelling local grid orders during flatten');
+    }
+
+    // 2. If LIVE mode, cancel all exchange open orders and close positions via Delta REST API
+    if (this.config.mode === 'LIVE') {
+      try {
+        const c1 = await this.deltaClient.cancelAllOrders(this.primaryProductId);
+        const c2 = await this.deltaClient.cancelAllOrders(this.hedgeProductId);
+        totalCancelledOrders += (c1 + c2);
+      } catch (err: any) {
+        logger.error({ err: err.message }, 'Failed to cancel open orders on Delta during flatten');
+      }
+
+      try {
+        const livePositions = await this.deltaClient.getOpenPositions();
+        for (const pos of livePositions) {
+          const size = typeof pos.size === 'number' ? pos.size : parseFloat(String(pos.size || '0'));
+          if (Math.abs(size) > 0) {
+            logger.info({ pos: pos.product_symbol, size }, 'Flattening live position on Delta...');
+            await this.deltaClient.closePositionMarket(pos.product_id, size);
+            closedPositions.push({ symbol: pos.product_symbol || String(pos.product_id), size });
+          }
+        }
+      } catch (err: any) {
+        logger.error({ err: err.message }, 'Failed to close live positions on Delta during flatten');
+      }
+    }
+
+    // 3. Flatten local / paper positions
+    const summary = this.positionManager.getPortfolioSummary(this.primaryPrice, this.hedgePrice);
+    if (summary.primaryPosition && summary.primaryPosition.quantityContracts > 0) {
+      if (this.config.mode !== 'LIVE') {
+        closedPositions.push({
+          symbol: this.config.primaryInstrument,
+          size: summary.primaryPosition.quantityContracts,
+        });
+      }
+      this.positionManager.resetPrimaryPosition();
+    }
+
+    // Close any open paper hedges
+    const openHedges = this.hedgeRepo.getOpenHedges(this.config.id);
+    for (const hedge of openHedges) {
+      if (this.config.mode !== 'LIVE') {
+        closedPositions.push({
+          symbol: hedge.instrument,
+          size: hedge.quantityContracts,
+        });
+      }
+      this.hedgeRepo.closeHedge(hedge.id, 0);
+    }
+
+    // 4. Update strategy and state in SQLite
     this.strategyRepo.updateStrategy(this.config.id, { status: 'KILLED' });
-    alerts.critical('STRATEGY KILLED', 'Emergency kill executed. All pending orders cancelled.');
+    this.strategyRepo.updateState(this.config.id, {
+      primaryQuantity: 0,
+      primaryAveragePrice: 0,
+      primaryNotional: 0,
+      currentGridLevel: 0,
+      lastHedgeTriggerLevel: 0,
+    });
+
+    // 5. Emit events
     this.emit('killed');
+    this.emit('flattened', { reason, closedPositions, totalCancelledOrders });
+
+    // 6. Critical Alert & Telegram Notification
+    const alertMsg = `Emergency flatten executed: ${totalCancelledOrders} orders cancelled, ${closedPositions.length} positions closed. Net exposure: 0 contracts.`;
+    alerts.critical('EMERGENCY FLATTEN COMPLETED', alertMsg);
+
+    telegram.notifyEmergencyFlatten({
+      reason,
+      status: 'KILLED',
+      cancelledOrdersCount: totalCancelledOrders,
+      closedPositions,
+    }).catch(() => {});
+
+    return {
+      success: true,
+      cancelledOrdersCount: totalCancelledOrders,
+      closedPositions,
+      message: alertMsg,
+    };
   }
 
   /**
@@ -366,6 +471,27 @@ export class StrategyEngine extends EventEmitter {
       'New Trend Cycle Initiated',
       `Direction: ${direction} | Entry: ${initialContracts} contracts @ ${fillPrice} | Grids: 5 orders placed`
     );
+
+    telegram.notifyTrendSignal({
+      direction,
+      symbol: this.config.primaryInstrument,
+      initialLots: initialContracts,
+      price: fillPrice,
+      gridLevels: this.config.gridLevels,
+      gridLotsPerLevel: this.config.gridLotsPerLevel,
+      spacingPercent: this.config.gridSpacingPercent,
+      leverage: this.config.leverage,
+    }).catch(() => {});
+
+    telegram.notifyOrderFilled({
+      symbol: this.config.primaryInstrument,
+      purpose: 'PRIMARY_INITIAL',
+      side,
+      lots: initialContracts,
+      price: fillPrice,
+      avgPrice: fillPrice,
+      totalLots: initialContracts,
+    }).catch(() => {});
   }
 
   /**
@@ -388,6 +514,16 @@ export class StrategyEngine extends EventEmitter {
         for (const f of filled) {
           if (f.purpose === 'GRID_ENTRY') {
             this.gridService.handleGridOrderFilled(f, this.primaryPrice);
+            const port = this.positionManager.getPortfolioSummary(this.primaryPrice, this.hedgePrice);
+            telegram.notifyOrderFilled({
+              symbol: f.symbol,
+              purpose: 'GRID_ENTRY',
+              side: f.side,
+              lots: f.quantityContracts,
+              price: f.averageFillPrice || f.price || this.primaryPrice,
+              avgPrice: port.primaryPosition?.averageEntryPrice,
+              totalLots: port.primaryPosition?.quantityContracts,
+            }).catch(() => {});
           }
         }
       }

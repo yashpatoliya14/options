@@ -48,6 +48,19 @@ const envSchema = z.object({
   DATABASE_BACKUP_DIR: z.string().default('data/backups'),
   LOG_LEVEL: z.string().default('info'),
   PORT: z.coerce.number().int().default(3000),
+
+  // Telegram Notifications
+  TELEGRAM_BOT_TOKEN: z.string().default(''),
+  TELEGRAM_CHAT_ID: z.string().default(''),
+  TELEGRAM_ENABLED: z
+    .preprocess((val) => {
+      if (typeof val === 'string') {
+        const lower = val.toLowerCase().trim();
+        return lower === 'true' || lower === '1' || lower === 'yes';
+      }
+      return Boolean(val);
+    }, z.boolean())
+    .default(false),
 });
 
 const parsed = envSchema.safeParse(process.env);

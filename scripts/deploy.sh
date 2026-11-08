@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "=== Deploying Options IV Arbitrage Algo (Node.js / TS) ==="
+echo "=== Deploying Delta Gold Trend + Grid Hedging Bot ==="
 
 # 1. Navigate to project directory
 cd "$(dirname "$0")/.." || cd ~/options
@@ -18,10 +18,18 @@ npm install
 echo "Building TypeScript..."
 npm run build
 
-# 5. Restart application (with systemd or PM2)
-if systemctl is-active --quiet options-algo; then
+# 5. Ensure data directories exist
+mkdir -p data data/backups
+
+# 6. Restart application with systemd (options.service or options-algo)
+if systemctl is-active --quiet options.service || systemctl is-enabled --quiet options.service 2>/dev/null; then
+    echo "Restarting systemd service options.service..."
+    sudo systemctl restart options.service
+    sudo systemctl status options.service --no-pager
+elif systemctl is-active --quiet options-algo; then
     echo "Restarting systemd service options-algo..."
     sudo systemctl restart options-algo
+    sudo systemctl status options-algo --no-pager
 elif command -v pm2 &> /dev/null; then
     echo "Reloading process with PM2..."
     pm2 reload ecosystem.config.js || pm2 start ecosystem.config.js
@@ -33,4 +41,5 @@ else
 fi
 
 echo "=== Deployment Complete ==="
+
 

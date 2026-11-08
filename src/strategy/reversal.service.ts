@@ -6,6 +6,7 @@ import { StrategyRepository } from '../database/repositories/strategy.repository
 import { TrendDirection, PositionSide } from '../types/strategy.types';
 import { logger } from '../monitoring/logger';
 import { alerts } from '../monitoring/alerts';
+import { telegram } from '../monitoring/telegram';
 
 export class ReversalService {
   private positionManager: PositionManager;
@@ -116,6 +117,13 @@ export class ReversalService {
     });
 
     logger.info({ newDirection, referencePrice: currentPrimaryPrice }, 'Reversal sequence completed.');
+
+    telegram.notifyTrendReversal({
+      fromDirection: previousDirection,
+      toDirection: newDirection,
+      primaryLotsClosed: summary.primaryPosition?.quantityContracts || 0,
+      hedgesClosedCount: summary.openHedgeCount || 0,
+    }).catch(() => {});
   }
 }
 
