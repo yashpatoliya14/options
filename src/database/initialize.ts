@@ -7,14 +7,32 @@ import path from 'path';
 import { getDatabase } from './connection';
 import { logger } from '../monitoring/logger';
 import { defaultStrategyConfig } from '../config/strategy.config';
+import { INIT_SCHEMA_SQL } from './schema.sql';
 
 export function initializeDatabase(customDbPath?: string): void {
   const db = getDatabase(customDbPath);
 
   logger.info('Initializing SQLite schema & migrations...');
 
-  const migrationPath = path.resolve(__dirname, 'migrations/001_init.sql');
-  const sql = fs.readFileSync(migrationPath, 'utf-8');
+  let sql = INIT_SCHEMA_SQL;
+
+  // Attempt to load from disk if migration file exists
+  const candidatePaths = [
+    path.resolve(__dirname, 'migrations/001_init.sql'),
+    path.resolve(process.cwd(), 'src/database/migrations/001_init.sql'),
+    path.resolve(__dirname, '../../src/database/migrations/001_init.sql'),
+  ];
+
+  for (const candidate of candidatePaths) {
+    if (fs.existsSync(candidate)) {
+      try {
+        sql = fs.readFileSync(candidate, 'utf-8');
+        break;
+      } catch {
+        // Fall back to embedded INIT_SCHEMA_SQL
+      }
+    }
+  }
 
   db.transaction(() => {
     db.exec(sql);
